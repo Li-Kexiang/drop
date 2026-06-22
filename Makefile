@@ -9,8 +9,8 @@ demo:
 	-docker run -d --name postgres-single -p 5433:5432 -e POSTGRES_DB=drop -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres postgres:14
 	-docker run -d --name minio-single -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=drop -e MINIO_ROOT_PASSWORD=drop1234 minio/minio server /data --console-address ":9001"
 	sleep 5
-	@echo "设置 MinIO 桶公开..."
-	venv/bin/python -c "from minio import Minio; import json; mc = Minio('127.0.0.1:9000', access_key='drop', secret_key='drop1234', secure=False); policy = {'Version':'2012-10-17','Statement':[{'Effect':'Allow','Principal':{'AWS':['*']},'Action':['s3:GetObject'],'Resource':['arn:aws:s3:::drop/*']}]}; mc.set_bucket_policy('drop', json.dumps(policy)); print('MinIO 桶已公开')"
+	@echo "创建 drop 桶并设置为公开..."
+	venv/bin/python -c "from minio import Minio; import json; mc = Minio('127.0.0.1:9000', access_key='drop', secret_key='drop1234', secure=False); if not mc.bucket_exists('drop'): mc.make_bucket('drop'); policy = {'Version':'2012-10-17','Statement':[{'Effect':'Allow','Principal':{'AWS':['*']},'Action':['s3:GetObject'],'Resource':['arn:aws:s3:::drop/*']}]}; mc.set_bucket_policy('drop', json.dumps(policy)); print('MinIO 桶已创建并公开')"
 	@echo "启动微服务..."
 	venv/bin/python server.py &
 	venv/bin/python agent.py &
