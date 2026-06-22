@@ -1,0 +1,105 @@
+import os,time,uuid,subprocess,tempfile,shutil,requests,logging
+from minio import Minio
+logging.basicConfig(level=logging.INFO, format='{"time":"%(asctime)s","level":"%(levelname)s","message":"%(message)s"}')
+logger=logging.getLogger("agent")
+AGENT_ID=os.getenv("AGENT_ID","agent-abc123")
+API_SERVER=os.getenv("API_SERVER","http://localhost:5000")
+mc=Minio("localhost:9000",access_key="drop",secret_key="drop1234",secure=False)
+if not mc.bucket_exists("drop"): mc.make_bucket("drop")
+
+def heartbeat():
+    try:
+        requests.post(f"{API_SERVER}/api/agents/heartbeat", json={"agent_id":AGENT_ID,"hostname":os.uname().nodename,"ip":"unknown"}, timeout=5)
+    except Exception as e: logger.error(f"Heartbeat error: {e}")
+
+def pull_task():
+    try:
+        resp=requests.get(f"{API_SERVER}/api/agents/{AGENT_ID}/tasks/pending", timeout=10)
+        if resp.status_code==204: return None
+        return resp.json() if resp.status_code==200 else None
+    except Exception as e: logger.error(f"Pull error: {e}"); return None
+
+def report(tid,status,reason="",cos_key=""):
+    try:
+        requests.post(f"{API_SERVER}/api/tasks/{tid}/result", json={"status":status,"reason":reason,"cos_key":cos_key}, timeout=10)
+    except Exception as e: logger.error(f"Report error: {e}")
+
+def execute(task):
+    tid=task['tid']; pid=task['pid']; dur=task['duration']; hz=task['hz']
+    try:
+        perf=shutil.which('perf')
+        if not perf: raise RuntimeError("perf not found")
+        with tempfile.TemporaryDirectory() as tmp:
+            data=os.path.join(tmp,"perf.data")
+            logger.info(f"Recording PID {pid} for {dur}s")
+            subprocess.run([perf,"record","-F",str(hz),"-g","--call-graph","dwarf","-p",str(pid),"-o",data,"--","sleep",str(dur)], check=True)
+            key=f"tasks/{tid}/perf.data"
+            mc.fput_object("drop",key,data)
+            report(tid,"UPLOADING",reason="Raw data uploaded",cos_key=key)
+            report(tid,"DONE",reason="Collection done")
+    except Exception as e:
+        logger.error(f"Task {tid} failed: {e}")
+        report(tid,"FAILED",reason=str(e))
+
+def main():
+    logger.info(f"Agent {AGENT_ID} starting")
+    while True:
+        heartbeat()
+        task=pull_task()
+        if task:
+            logger.info(f"Got task {task['tid']}")
+            execute(task)
+        time.sleep(5)
+
+# ========== eBPF 采集函数 ==========
+def execute_ebpf_task(tid, pid, duration):
+    import tempfile, subprocess, os, shutil
+    bpftrace = shutil.which('bpftrace')
+    if not bpftrace:
+        raise RuntimeError("bpftrace not found")
+    
+    # 生成 bpftrace 脚本
+    script_lines = []
+    if pid and pid > 0:
+        script_lines.append(f"tracepoint:syscalls:sys_enter_read /pid == {pid}/")
+    else:
+        script_lines.append("tracepoint:syscalls:sys_enter_read")
+    script_lines += [
+        "{",
+        "    @[kstack, ustack] = count();",
+        "}",
+        f"interval:s:{duration}",
+        "{",
+        "    exit();",
+        "}"
+    ]
+    script_content = "\n".join(script_lines)
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.bt') as f:
+        f.write(script_content)
+        f.flush()
+        cmd = ["sudo", bpftrace, f.name]
+        logging.info(f"Running eBPF: {' '.join(cmd)}")
+        output = subprocess.check_output(cmd, text=True, stderr=subprocess.PIPE)
+    
+    lines = []
+    for line in output.split('\n'):
+        if line.strip() and ':' in line and not line.startswith('Attaching'):
+            parts = line.split(':', 1)
+            if len(parts) == 2:
+                stack_part = parts[0].strip()
+                count = parts[1].strip()
+                stack = stack_part.replace('@[', '').replace(']', '').replace(',', ';')
+                lines.append(f"{stack} {count}")
+    
+    if not lines:
+        raise RuntimeError("No eBPF stack counts found")
+    
+    folded_data = '\n'.join(lines)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.folded') as f:
+        f.write(folded_data)
+        f.flush()
+        cos_key = f"tasks/{tid}/ebpf_folded.txt"
+        mc.fput_object("drop", cos_key, f.name)
+    return cos_key
+if __name__=="__main__": main()

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Drop</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.7/axios.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f7fa;margin:0;padding:20px;color:#1f2937}
+.container{max-width:1000px;margin:0 auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 4px 12px rgba(0,0,0,0.06)}
+h1{font-size:28px;font-weight:600;color:#111827;margin:0 0 20px 0}
+.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:24px}
+.controls label{display:flex;align-items:center;gap:6px;font-weight:500;font-size:14px}
+.controls input{padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;background:#f9fafb;width:80px}
+.controls input:focus{border-color:#3b82f6;outline:none;box-shadow:0 0 0 3px rgba(59,130,246,0.2)}
+.btn{padding:8px 24px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-weight:500;cursor:pointer;transition:background .2s}
+.btn:hover{background:#2563eb}
+.btn-sm{padding:4px 12px;font-size:13px;background:#e5e7eb;color:#1f2937;border:none;border-radius:6px;cursor:pointer;margin:2px}
+.btn-sm:hover{background:#d1d5db}
+.task-list{list-style:none;padding:0;margin:0}
+.task-item{padding:12px 16px;border-bottom:1px solid #f3f4f6;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.task-item:last-child{border-bottom:none}
+.task-id{font-weight:500;min-width:100px}
+.task-status{font-weight:500;padding:2px 12px;border-radius:12px;font-size:13px}
+.status-PENDING{background:#fef3c7;color:#92400e}
+.status-RUNNING{background:#dbeafe;color:#1e40af}
+.status-UPLOADING{background:#e0e7ff;color:#3730a3}
+.status-DONE{background:#d1fae5;color:#065f46}
+.status-FAILED{background:#fee2e2;color:#991b1b}
+.flame-container,.heatmap-container{display:none;margin-top:24px;border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafbfc}
+.flame-container h3,.heatmap-container h3{margin-top:0;font-weight:500}
+#flame-svg{width:100%;height:auto;border-radius:8px}
+#heatmap{width:100%;height:400px}
+.audit-container{display:none;margin-top:24px;border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafbfc}
+.audit-container table{width:100%;border-collapse:collapse;font-size:13px}
+.audit-container th,.audit-container td{padding:8px;text-align:left;border-bottom:1px solid #f3f4f6}
+.audit-container th{background:#e5e7eb;font-weight:600}
+</style>
+</head><body>
+<div class="container">
+<h1>Drop</h1>
+<div class="controls">
+<label>PID: <input type="number" id="pid" value="1"></label>
+<label>时长(s): <input type="number" id="duration" value="5"></label>
+<button class="btn" onclick="createTask()">采集</button>
+</div>
+<div id="agent-info">Agent: <span id="agent-status">Loading...</span></div>
+<div id="tasks"><ul class="task-list"></ul></div>
+<div class="audit-container" id="audit-container"><h3>审计日志</h3><div id="audit-log"></div></div>
+<button class="btn" onclick="showAudit()" style="margin-top:10px;">审计日志</button>
+<div id="flame-container" class="flame-container"><h3>火焰图 <span id="flame-title"></span></h3><div id="flame-svg"></div></div>
+<div id="heatmap-container" class="heatmap-container"><h3>热力图 <span id="heatmap-title"></span></h3><div id="heatmap"></div></div>
+</div>
+<script>
+const AGENT_ID='agent-abc123';
+function loadAgents(){axios.get('/api/agents').then(res=>{const a=res.data.find(a=>a.agent_id===AGENT_ID);document.getElementById('agent-status').innerText=a?a.status:'unknown';}).catch(()=>{});}
+function loadTasks(){axios.get('/api/tasks').then(res=>{const list=document.getElementById('tasks').querySelector('ul');list.innerHTML='';res.data.forEach(t=>{const li=document.createElement('li');li.className='task-item';let sc='status-'+t.status;li.innerHTML=`<span class="task-id">${t.tid}</span><span class="task-status ${sc}">${t.status}</span><span style="font-size:13px;color:#6b7280;">${t.reason||''}</span>`;if(t.status==='DONE'){li.innerHTML+=`<button class="btn-sm" onclick="showFlame('${t.tid}')">火焰图</button><button class="btn-sm" onclick="showHeatmap('${t.tid}')">热力图</button>`;}list.appendChild(li);});});}
+function createTask(){const pid=parseInt(document.getElementById('pid').value)||1;const duration=parseInt(document.getElementById('duration').value)||5;axios.post('/api/tasks',{agent_id:AGENT_ID,pid,duration,hz:99}).then(res=>{alert('任务创建: '+res.data.tid);loadTasks();}).catch(err=>alert('创建失败: '+err.response?.data?.error||err.message));}
+function showFlame(tid){axios.get(`/api/tasks/${tid}`).then(res=>{const url=res.data.flamegraph_url;if(url){document.getElementById('flame-container').style.display='block';document.getElementById('flame-title').innerText=tid;const svgContainer=document.getElementById('flame-svg');svgContainer.innerHTML='<p>加载中...</p>';fetch(url).then(resp=>{if(!resp.ok)throw new Error('HTTP '+resp.status);return resp.text();}).then(svgText=>{svgContainer.innerHTML=svgText;}).catch(err=>{svgContainer.innerHTML='<p style="color:red;">加载火焰图失败: '+err.message+'</p>';});}else{alert('火焰图尚未生成');}}).catch(err=>alert('获取任务信息失败: '+err.message));}
+function showHeatmap(tid){if(typeof echarts==='undefined'){alert('ECharts未加载');return;}axios.get(`/api/tasks/${tid}/heatmap`).then(res=>{const data=res.data;if(data&&data.length){document.getElementById('heatmap-container').style.display='block';document.getElementById('heatmap-title').innerText=tid;const chart=echarts.init(document.getElementById('heatmap'));const xData=data.map(item=>item.name);const seriesData=data.map((item,idx)=>[idx,0,item.value]);const option={tooltip:{formatter:params=>params.value[2]+' samples'},grid:{left:'10%',right:'10%',top:'10%',bottom:'20%'},xAxis:{type:'category',data:xData,axisLabel:{rotate:45,interval:0}},yAxis:{type:'category',data:[''],show:false},visualMap:{min:Math.min(...data.map(d=>d.value)),max:Math.max(...data.map(d=>d.value)),calculable:true,orient:'horizontal',left:'center',bottom:'0%'},series:[{type:'heatmap',data:seriesData,label:{show:false}}]};chart.setOption(option);window.addEventListener('resize',()=>chart.resize());}else{alert('热力图数据为空');}}).catch(err=>alert('加载热力图失败: '+err.message));}
+function showAudit(){axios.get('/api/audit').then(res=>{const container=document.getElementById('audit-container');container.style.display='block';const logs=res.data;let html='<table><thead><tr><th>时间</th><th>事件</th><th>详情</th></tr></thead><tbody>';logs.forEach(row=>{const time=new Date(row.created_at).toLocaleString();let eventDisplay=row.event;if(eventDisplay==='AGENT_OFFLINE')eventDisplay='⬇️ 离线';else if(eventDisplay==='AGENT_RECOVERED')eventDisplay='⬆️ 恢复';else eventDisplay='🔹 '+eventDisplay;html+=`<tr><td>${time}</td><td><strong>${eventDisplay}</strong></td><td>${row.details||''}</td></tr>`;});html+='</tbody></table>';document.getElementById('audit-log').innerHTML=html;}).catch(err=>alert('加载审计日志失败: '+err.message));}
+loadAgents();loadTasks();setInterval(loadAgents,10000);setInterval(loadTasks,3000);
+</script></body></html>
