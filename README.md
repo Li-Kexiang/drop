@@ -42,10 +42,8 @@ drop/
 - 账号：drop
 - 密码：drop1234
 ## 演示视频
-未实现eBPF演示部分）
-https://share.weiyun.com/9KDZCGmY
-（后来增加eBPF演示部分）
-https://share.weiyun.com/gvWl8tIX
+视频链接：
+https://share.weiyun.com/Z33242uo
 
 
 ## 补充说明：eBPF 采集
