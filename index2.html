@@ -1,68 +1,343 @@
 <!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Drop</title>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Drop - 性能分析平台</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.7/axios.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
 <style>
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f7fa;margin:0;padding:20px;color:#1f2937}
-.container{max-width:1000px;margin:0 auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 4px 12px rgba(0,0,0,0.06)}
-h1{font-size:28px;font-weight:600;color:#111827;margin:0 0 20px 0}
-.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:24px}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f0f2f5;margin:0;padding:20px;color:#1f2937}
+.container{max-width:1100px;margin:0 auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 4px 12px rgba(0,0,0,0.06)}
+h1{font-size:28px;font-weight:600;color:#111827;margin:0 0 8px 0}
+.subtitle{color:#6b7280;font-size:14px;margin-bottom:24px}
+.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:20px;padding:16px;background:#f9fafb;border-radius:12px}
 .controls label{display:flex;align-items:center;gap:6px;font-weight:500;font-size:14px}
-.controls input{padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;background:#f9fafb;width:80px}
-.controls input:focus{border-color:#3b82f6;outline:none;box-shadow:0 0 0 3px rgba(59,130,246,0.2)}
-.btn{padding:8px 24px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-weight:500;cursor:pointer;transition:background .2s}
+.controls input, .controls select{padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;background:#fff}
+.controls input{width:90px}
+.controls input:focus, .controls select:focus{border-color:#3b82f6;outline:none;box-shadow:0 0 0 3px rgba(59,130,246,0.2)}
+.btn{padding:10px 24px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-weight:500;cursor:pointer;transition:background .2s;font-size:14px}
 .btn:hover{background:#2563eb}
-.btn-sm{padding:4px 12px;font-size:13px;background:#e5e7eb;color:#1f2937;border:none;border-radius:6px;cursor:pointer;margin:2px}
+.btn-green{background:#10b981}.btn-green:hover{background:#059669}
+.btn-danger{background:#ef4444}.btn-danger:hover{background:#dc2626}
+.btn-sm{padding:4px 12px;font-size:12px;background:#e5e7eb;color:#1f2937;border:none;border-radius:6px;cursor:pointer;margin:2px;transition:background .2s}
 .btn-sm:hover{background:#d1d5db}
+.section-title{font-size:16px;font-weight:600;margin:20px 0 12px;display:flex;align-items:center;gap:8px}
+.agent-bar{display:flex;align-items:center;gap:12px;padding:8px 16px;background:#f0fdf4;border-radius:8px;margin-bottom:16px;font-size:14px}
+.agent-dot{width:8px;height:8px;border-radius:50%}
+.agent-dot.online{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,0.4)}
+.agent-dot.offline{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.4)}
 .task-list{list-style:none;padding:0;margin:0}
-.task-item{padding:12px 16px;border-bottom:1px solid #f3f4f6;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.task-item{padding:12px 16px;border-bottom:1px solid #f3f4f6;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px}
 .task-item:last-child{border-bottom:none}
-.task-id{font-weight:500;min-width:100px}
-.task-status{font-weight:500;padding:2px 12px;border-radius:12px;font-size:13px}
+.task-id{font-weight:500;min-width:110px;font-family:monospace}
+.task-status{font-weight:500;padding:2px 12px;border-radius:12px;font-size:12px;text-transform:uppercase}
 .status-PENDING{background:#fef3c7;color:#92400e}
 .status-RUNNING{background:#dbeafe;color:#1e40af}
 .status-UPLOADING{background:#e0e7ff;color:#3730a3}
 .status-DONE{background:#d1fae5;color:#065f46}
 .status-FAILED{background:#fee2e2;color:#991b1b}
-.flame-container,.heatmap-container{display:none;margin-top:24px;border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafbfc}
-.flame-container h3,.heatmap-container h3{margin-top:0;font-weight:500}
-#flame-svg{width:100%;height:auto;border-radius:8px}
+.task-profiler{font-size:11px;background:#f3f4f6;padding:2px 8px;border-radius:4px;color:#6b7280}
+.flame-container,.heatmap-container,.attribution-container{display:none;margin-top:20px;border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafbfc}
+.flame-container h3,.heatmap-container h3,.attribution-container h3{margin:0 0 12px;font-weight:500}
+#flame-svg{width:100%;min-height:300px;border-radius:8px;overflow:auto;background:#fff;border:1px solid #e5e7eb}
 #heatmap{width:100%;height:400px}
-.audit-container{display:none;margin-top:24px;border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafbfc}
+.attribution-content{padding:16px;background:#fff;border-radius:8px;border:1px solid #e5e7eb;font-size:14px;line-height:1.6;white-space:pre-wrap}
+.attribution-loading{text-align:center;padding:40px;color:#6b7280}
+.audit-container{display:none;margin-top:20px;border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fafbfc}
 .audit-container table{width:100%;border-collapse:collapse;font-size:13px}
-.audit-container th,.audit-container td{padding:8px;text-align:left;border-bottom:1px solid #f3f4f6}
-.audit-container th{background:#e5e7eb;font-weight:600}
+.audit-container th,.audit-container td{padding:8px 12px;text-align:left;border-bottom:1px solid #f3f4f6}
+.audit-container th{background:#f9fafb;font-weight:600}
+.tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid #e5e7eb}
+.tab{padding:8px 20px;cursor:pointer;font-size:14px;font-weight:500;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s}
+.tab.active{color:#3b82f6;border-bottom-color:#3b82f6}
+.tab:hover{color:#374151}
+.empty-state{text-align:center;padding:40px;color:#9ca3af;font-size:14px}
 </style>
-</head><body>
-  <div>
-    <label>采集类型:
-      <select id="profiler">
-        <option value="perf">perf</option>
-        <option value="ebpf">eBPF (IO事件)</option>
-      </select>
-    </label>
-  </div>
+</head>
+<body>
 <div class="container">
-<h1>Drop</h1>
+<h1>🔥 Drop</h1>
+<p class="subtitle">一站式性能分析平台 — CPU / 内存 / IO 实时采集与可视化</p>
+
 <div class="controls">
-<label>PID: <input type="number" id="pid" value="1"></label>
-<label>时长(s): <input type="number" id="duration" value="5"></label>
-<button class="btn" onclick="createTask()">采集</button>
+  <label>PID: <input type="number" id="pid" value="1" min="1"></label>
+  <label>时长(s): <input type="number" id="duration" value="5" min="1" max="300"></label>
+  <label>采集器:
+    <select id="profiler">
+      <option value="perf">perf (CPU)</option>
+      <option value="ebpf">eBPF (IO事件)</option>
+      <option value="pyspy">py-spy (Python)</option>
+    </select>
+  </label>
+  <button class="btn" onclick="createTask()">🚀 开始采集</button>
 </div>
-<div id="agent-info">Agent: <span id="agent-status">Loading...</span></div>
-<div id="tasks"><ul class="task-list"></ul></div>
-<div class="audit-container" id="audit-container"><h3>审计日志</h3><div id="audit-log"></div></div>
-<button class="btn" onclick="showAudit()" style="margin-top:10px;">审计日志</button>
-<div id="flame-container" class="flame-container"><h3>火焰图 <span id="flame-title"></span></h3><div id="flame-svg"></div></div>
-<div id="heatmap-container" class="heatmap-container"><h3>热力图 <span id="heatmap-title"></span></h3><div id="heatmap"></div></div>
+
+<div class="agent-bar">
+  <div class="agent-dot online" id="agent-dot"></div>
+  <span>Agent: <strong id="agent-id">agent-abc123</strong></span>
+  <span style="margin-left:auto;color:#6b7280">状态: <strong id="agent-status">检测中...</strong></span>
 </div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('tasks')">📋 任务列表</div>
+  <div class="tab" onclick="switchTab('continuous')">📊 持续分析</div>
+  <div class="tab" onclick="switchTab('agents')">🖥️ Agent 列表</div>
+</div>
+
+<div id="tab-tasks">
+  <div id="tasks"><ul class="task-list"><li class="empty-state">暂无任务，请填写 PID 并点击"开始采集"</li></ul></div>
+</div>
+
+<div id="tab-continuous" style="display:none">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+    <button class="btn btn-green" onclick="startContinuous()">▶️ 启动持续分析</button>
+    <button class="btn btn-danger" onclick="stopContinuous()">⏹️ 停止</button>
+    <span style="font-size:13px;color:#6b7280" id="continuous-status">未启动</span>
+  </div>
+  <div id="continuous-windows"></div>
+</div>
+
+<div id="tab-agents" style="display:none">
+  <div id="agent-list"></div>
+</div>
+
+<div style="display:flex;gap:8px;margin-top:16px">
+  <button class="btn-sm" onclick="showAudit()">📝 审计日志</button>
+  <button class="btn-sm" onclick="showAttribution()" id="btn-attribution" style="display:none">🤖 智能归因</button>
+</div>
+
+<div class="audit-container" id="audit-container">
+  <h3>审计日志</h3>
+  <div id="audit-log"></div>
+</div>
+
+<div id="flame-container" class="flame-container">
+  <h3>🔥 火焰图 — <span id="flame-title"></span></h3>
+  <div id="flame-svg"></div>
+</div>
+
+<div id="heatmap-container" class="heatmap-container">
+  <h3>📊 热力图 — <span id="heatmap-title"></span></h3>
+  <div id="heatmap"></div>
+</div>
+
+<div id="attribution-container" class="attribution-container">
+  <h3>🤖 智能归因分析</h3>
+  <div id="attribution-content" class="attribution-loading">正在分析中...</div>
+</div>
+</div>
+
 <script>
-const AGENT_ID='agent-abc123';
-function loadAgents(){axios.get('/api/agents').then(res=>{const a=res.data.find(a=>a.agent_id===AGENT_ID);document.getElementById('agent-status').innerText=a?a.status:'unknown';}).catch(()=>{});}
-function loadTasks(){axios.get('/api/tasks').then(res=>{const list=document.getElementById('tasks').querySelector('ul');list.innerHTML='';res.data.forEach(t=>{const li=document.createElement('li');li.className='task-item';let sc='status-'+t.status;li.innerHTML=`<span class="task-id">${t.tid}</span><span class="task-status ${sc}">${t.status}</span><span style="font-size:13px;color:#6b7280;">${t.reason||''}</span>`;if(t.status==='DONE'){li.innerHTML+=`<button class="btn-sm" onclick="showFlame('${t.tid}')">火焰图</button><button class="btn-sm" onclick="showHeatmap('${t.tid}')">热力图</button>`;}list.appendChild(li);});});}
-function createTask(){const pid=parseInt(document.getElementById('pid').value)||1;const duration=parseInt(document.getElementById('duration').value)||5;axios.post('/api/tasks',{agent_id:AGENT_ID,pid,duration,hz:99}).then(res=>{alert('任务创建: '+res.data.tid);loadTasks();}).catch(err=>alert('创建失败: '+err.response?.data?.error||err.message));}
-function showFlame(tid){axios.get(`/api/tasks/${tid}`).then(res=>{const url=res.data.flamegraph_url;if(url){document.getElementById('flame-container').style.display='block';document.getElementById('flame-title').innerText=tid;const svgContainer=document.getElementById('flame-svg');svgContainer.innerHTML='<p>加载中...</p>';fetch(url).then(resp=>{if(!resp.ok)throw new Error('HTTP '+resp.status);return resp.text();}).then(svgText=>{svgContainer.innerHTML=svgText;}).catch(err=>{svgContainer.innerHTML='<p style="color:red;">加载火焰图失败: '+err.message+'</p>';});}else{alert('火焰图尚未生成');}}).catch(err=>alert('获取任务信息失败: '+err.message));}
-function showHeatmap(tid){if(typeof echarts==='undefined'){alert('ECharts未加载');return;}axios.get(`/api/tasks/${tid}/heatmap`).then(res=>{const data=res.data;if(data&&data.length){document.getElementById('heatmap-container').style.display='block';document.getElementById('heatmap-title').innerText=tid;const chart=echarts.init(document.getElementById('heatmap'));const xData=data.map(item=>item.name);const seriesData=data.map((item,idx)=>[idx,0,item.value]);const option={tooltip:{formatter:params=>params.value[2]+' samples'},grid:{left:'10%',right:'10%',top:'10%',bottom:'20%'},xAxis:{type:'category',data:xData,axisLabel:{rotate:45,interval:0}},yAxis:{type:'category',data:[''],show:false},visualMap:{min:Math.min(...data.map(d=>d.value)),max:Math.max(...data.map(d=>d.value)),calculable:true,orient:'horizontal',left:'center',bottom:'0%'},series:[{type:'heatmap',data:seriesData,label:{show:false}}]};chart.setOption(option);window.addEventListener('resize',()=>chart.resize());}else{alert('热力图数据为空');}}).catch(err=>alert('加载热力图失败: '+err.message));}
-function showAudit(){axios.get('/api/audit').then(res=>{const container=document.getElementById('audit-container');container.style.display='block';const logs=res.data;let html='<table><thead><tr><th>时间</th><th>事件</th><th>详情</th></tr></thead><tbody>';logs.forEach(row=>{const time=new Date(row.created_at).toLocaleString();let eventDisplay=row.event;if(eventDisplay==='AGENT_OFFLINE')eventDisplay='⬇️ 离线';else if(eventDisplay==='AGENT_RECOVERED')eventDisplay='⬆️ 恢复';else eventDisplay='🔹 '+eventDisplay;html+=`<tr><td>${time}</td><td><strong>${eventDisplay}</strong></td><td>${row.details||''}</td></tr>`;});html+='</tbody></table>';document.getElementById('audit-log').innerHTML=html;}).catch(err=>alert('加载审计日志失败: '+err.message));}
-loadAgents();loadTasks();setInterval(loadAgents,10000);setInterval(loadTasks,3000);
-</script></body></html>
+const AGENT_ID = 'agent-abc123';
+let currentTaskId = null;
+let heatmapChart = null;
+let continuousTimer = null;
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`[onclick="switchTab('${tab}')"]`).classList.add('active');
+  document.getElementById('tab-tasks').style.display = tab === 'tasks' ? '' : 'none';
+  document.getElementById('tab-continuous').style.display = tab === 'continuous' ? '' : 'none';
+  document.getElementById('tab-agents').style.display = tab === 'agents' ? '' : 'none';
+  if (tab === 'agents') loadAgentList();
+  if (tab === 'continuous') loadContinuousWindows();
+}
+
+function loadAgents() {
+  axios.get('/api/agents').then(res => {
+    const a = res.data.find(a => a.agent_id === AGENT_ID);
+    const statusEl = document.getElementById('agent-status');
+    const dotEl = document.getElementById('agent-dot');
+    if (a) {
+      statusEl.innerText = a.status;
+      statusEl.style.color = a.status === 'ONLINE' ? '#10b981' : '#ef4444';
+      dotEl.className = 'agent-dot ' + (a.status === 'ONLINE' ? 'online' : 'offline');
+    } else {
+      statusEl.innerText = 'unknown';
+    }
+  }).catch(() => {});
+}
+
+function loadAgentList() {
+  axios.get('/api/agents').then(res => {
+    const list = document.getElementById('agent-list');
+    if (!res.data.length) { list.innerHTML = '<div class="empty-state">暂无 Agent</div>'; return; }
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:14px"><thead><tr><th style="text-align:left;padding:8px">Agent ID</th><th style="text-align:left;padding:8px">主机名</th><th style="text-align:left;padding:8px">状态</th><th style="text-align:left;padding:8px">最后心跳</th></tr></thead><tbody>';
+    res.data.forEach(a => {
+      const statusColor = a.status === 'ONLINE' ? '#10b981' : '#ef4444';
+      const time = a.last_heartbeat ? new Date(a.last_heartbeat).toLocaleString() : '-';
+      html += `<tr><td style="padding:8px;font-family:monospace">${a.agent_id}</td><td style="padding:8px">${a.hostname||'-'}</td><td style="padding:8px;color:${statusColor};font-weight:500">${a.status}</td><td style="padding:8px;color:#6b7280">${time}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    list.innerHTML = html;
+  }).catch(() => {});
+}
+
+function loadTasks() {
+  axios.get('/api/tasks').then(res => {
+    const list = document.getElementById('tasks').querySelector('ul');
+    if (!res.data.length) { list.innerHTML = '<li class="empty-state">暂无任务，请填写 PID 并点击"开始采集"</li>'; return; }
+    list.innerHTML = '';
+    res.data.forEach(t => {
+      const li = document.createElement('li');
+      li.className = 'task-item';
+      const sc = 'status-' + t.status;
+      const profLabel = t.profiler || 'perf';
+      li.innerHTML = `<span class="task-id">${t.tid}</span>`
+        + `<span class="task-profiler">${profLabel}</span>`
+        + `<span class="task-status ${sc}">${t.status}</span>`
+        + `<span style="font-size:13px;color:#6b7280;flex:1">${t.reason||''}</span>`;
+      if (t.status === 'DONE') {
+        li.innerHTML += `<button class="btn-sm" onclick="showFlame('${t.tid}')">🔥 火焰图</button>`
+          + `<button class="btn-sm" onclick="showHeatmap('${t.tid}')">📊 热力图</button>`
+          + `<button class="btn-sm" onclick="showAttribution('${t.tid}')">🤖 归因</button>`;
+      }
+      list.appendChild(li);
+    });
+  });
+}
+
+function createTask() {
+  const pid = parseInt(document.getElementById('pid').value) || 1;
+  const duration = parseInt(document.getElementById('duration').value) || 5;
+  const profiler = document.getElementById('profiler').value;
+  axios.post('/api/tasks', {
+    agent_id: AGENT_ID, pid, duration, hz: 99, profiler
+  }).then(res => {
+    alert('✅ 任务创建: ' + res.data.tid);
+    loadTasks();
+  }).catch(err => alert('❌ 创建失败: ' + (err.response?.data?.error || err.message)));
+}
+
+function showFlame(tid) {
+  currentTaskId = tid;
+  axios.get('/api/tasks/' + tid).then(res => {
+    const url = res.data.flamegraph_url;
+    if (!url) { alert('火焰图尚未生成'); return; }
+    document.getElementById('flame-container').style.display = 'block';
+    document.getElementById('flame-title').innerText = tid + ' (' + (res.data.profiler||'perf') + ')';
+    const svgContainer = document.getElementById('flame-svg');
+    svgContainer.innerHTML = '<p style="text-align:center;padding:40px;color:#6b7280">加载中...</p>';
+    fetch(url).then(resp => {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.text();
+    }).then(svgText => {
+      svgContainer.innerHTML = svgText;
+    }).catch(err => {
+      svgContainer.innerHTML = '<p style="color:red;text-align:center;padding:40px">加载火焰图失败: ' + err.message + '</p>';
+    });
+    document.getElementById('btn-attribution').style.display = 'inline-block';
+  }).catch(err => alert('获取任务信息失败: ' + err.message));
+}
+
+function showHeatmap(tid) {
+  if (typeof echarts === 'undefined') { alert('ECharts 未加载'); return; }
+  axios.get('/api/tasks/' + tid + '/heatmap').then(res => {
+    const data = res.data;
+    if (!data || !data.length) { alert('热力图数据为空'); return; }
+    document.getElementById('heatmap-container').style.display = 'block';
+    document.getElementById('heatmap-title').innerText = tid;
+    if (heatmapChart) heatmapChart.dispose();
+    heatmapChart = echarts.init(document.getElementById('heatmap'));
+    const xData = data.map(d => d.name);
+    const seriesData = data.map((d, i) => [i, 0, d.value]);
+    heatmapChart.setOption({
+      tooltip: { formatter: p => p.value[2] + ' samples — ' + xData[p.value[0]] },
+      grid: { left: '12%', right: '5%', top: '10%', bottom: '20%' },
+      xAxis: { type: 'category', data: xData, axisLabel: { rotate: 45, interval: 0, fontSize: 11 } },
+      yAxis: { type: 'category', data: [''], show: false },
+      visualMap: {
+        min: Math.min(...data.map(d => d.value)),
+        max: Math.max(...data.map(d => d.value)),
+        calculable: true, orient: 'horizontal', left: 'center', bottom: '0%'
+      },
+      series: [{ type: 'heatmap', data: seriesData, label: { show: false } }]
+    });
+    window.addEventListener('resize', () => { if (heatmapChart) heatmapChart.resize(); });
+  }).catch(err => alert('加载热力图失败: ' + err.message));
+}
+
+function showAttribution(tid) {
+  const taskId = tid || currentTaskId;
+  if (!taskId) { alert('请先选择一个已完成的任务'); return; }
+  const container = document.getElementById('attribution-container');
+  const content = document.getElementById('attribution-content');
+  container.style.display = 'block';
+  content.className = 'attribution-loading';
+  content.innerHTML = '⏳ AI 正在分析性能数据，请稍候...';
+  axios.post('/api/attribution/' + taskId).then(res => {
+    content.className = 'attribution-content';
+    content.innerHTML = res.data.attribution || '暂无归因结果';
+  }).catch(err => {
+    content.className = 'attribution-content';
+    content.innerHTML = '❌ 归因分析失败: ' + (err.response?.data?.error || err.message);
+  });
+}
+
+function showAudit() {
+  const container = document.getElementById('audit-container');
+  if (container.style.display === 'block') { container.style.display = 'none'; return; }
+  axios.get('/api/audit').then(res => {
+    container.style.display = 'block';
+    const logs = res.data;
+    if (!logs.length) { document.getElementById('audit-log').innerHTML = '<div class="empty-state">暂无审计日志</div>'; return; }
+    let html = '<table><thead><tr><th>时间</th><th>Agent</th><th>事件</th><th>详情</th></tr></thead><tbody>';
+    logs.forEach(row => {
+      const time = new Date(row.created_at).toLocaleString();
+      let eventDisplay = row.event;
+      if (eventDisplay === 'AGENT_OFFLINE') eventDisplay = '⬇️ 离线';
+      else if (eventDisplay === 'AGENT_RECOVERED') eventDisplay = '⬆️ 恢复';
+      html += `<tr><td>${time}</td><td style="font-family:monospace">${row.agent_id||'-'}</td><td><strong>${eventDisplay}</strong></td><td>${row.details||''}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('audit-log').innerHTML = html;
+  }).catch(err => alert('加载审计日志失败: ' + err.message));
+}
+
+// Continuous Profiling
+function startContinuous() {
+  axios.post('/api/continuous/start', { agent_id: AGENT_ID, pid: parseInt(document.getElementById('pid').value)||1 })
+    .then(res => {
+      document.getElementById('continuous-status').innerHTML = '✅ 运行中 — ' + res.data.message;
+      loadContinuousWindows();
+      continuousTimer = setInterval(loadContinuousWindows, 5000);
+    }).catch(err => alert('启动失败: ' + (err.response?.data?.error || err.message)));
+}
+
+function stopContinuous() {
+  axios.post('/api/continuous/stop').then(res => {
+    document.getElementById('continuous-status').innerHTML = '⏹️ 已停止';
+    if (continuousTimer) { clearInterval(continuousTimer); continuousTimer = null; }
+  }).catch(err => alert('停止失败: ' + (err.response?.data?.error || err.message)));
+}
+
+function loadContinuousWindows() {
+  axios.get('/api/continuous/windows').then(res => {
+    const windows = res.data;
+    const container = document.getElementById('continuous-windows');
+    if (!windows || !windows.length) {
+      container.innerHTML = '<div class="empty-state">暂无持续分析数据，点击"启动持续分析"开始</div>';
+      return;
+    }
+    let html = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+    windows.forEach(w => {
+      html += `<div style="padding:8px 16px;background:#f9fafb;border-radius:8px;font-size:13px;cursor:pointer"
+        onclick="showFlame('${w.cid}')" title="点击查看火焰图">
+        <strong>${new Date(w.ts*1000).toLocaleTimeString()}</strong>
+        <span style="color:#10b981;margin-left:8px">${w.has_data ? '✅' : '⏳'}</span>
+      </div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+  }).catch(() => {});
+}
+
+// Init
+loadAgents();
+loadTasks();
+setInterval(loadAgents, 10000);
+setInterval(loadTasks, 3000);
+</script>
+</body>
+</html>

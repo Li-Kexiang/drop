@@ -1,0 +1,105 @@
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: drop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: drop
+      MINIO_ROOT_PASSWORD: drop1234
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 drop drop1234;
+      mc mb local/drop --ignore-existing;
+      mc anonymous set public local/drop;
+      echo 'MinIO bucket ready';
+      "
+
+  server:
+    build: .
+    command: python server.py
+    ports:
+      - "5000:5000"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=drop
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - MINIO_HOST=minio:9000
+      - ANALYZER_URL=http://analyzer:5003
+      - LLM_ENDPOINT=${LLM_ENDPOINT:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  agent:
+    build: .
+    command: python agent.py
+    pid: "host"
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+      - SYS_PTRACE
+      - NET_ADMIN
+    environment:
+      - AGENT_ID=agent-abc123
+      - API_SERVER=http://server:5000
+      - MINIO_HOST=minio:9000
+      - ANALYZER_URL=http://analyzer:5003
+      - CONTINUOUS_PROFILING=${CONTINUOUS_PROFILING:-false}
+      - CONTINUOUS_PID=${CONTINUOUS_PID:-1}
+    depends_on:
+      - server
+    restart: unless-stopped
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      - /proc:/host/proc:ro
+
+  analyzer:
+    build: .
+    command: python analyzer.py
+    environment:
+      - MINIO_HOST=minio:9000
+    depends_on:
+      - minio-init
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:
