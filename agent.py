@@ -196,25 +196,21 @@ def execute_pyspy_task(tid, pid, duration):
             raise RuntimeError(f"py-spy failed: {result.stderr}")
 
         # 将 raw 格式转换为 folded 格式
-        # raw 格式示例:
-        # Thread 12345 (active)
-        #     func1 (file.py:10)
-        #     func2 (file.py:20)
-        #
+        # raw 格式: func1 (file:line);func2 (file:line);... count
+        import re
         stacks = []
-        current_stack = []
         with open(folded_path, 'r') as f:
             for line in f:
-                line = line.rstrip()
-                if line.startswith('Thread ') or line == '':
-                    if current_stack:
-                        stacks.append(';'.join(reversed(current_stack)) + ' 1')
-                        current_stack = []
-                elif line.startswith('    ') or line.startswith('\t'):
-                    func = line.strip().split(' (')[0]
-                    current_stack.append(func)
-            if current_stack:
-                stacks.append(';'.join(reversed(current_stack)) + ' 1')
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.rsplit(' ', 1)
+                if len(parts) != 2:
+                    continue
+                stack_str, count = parts
+                # 去掉 (file:line) 后缀
+                funcs = [re.sub(r' \(.*?\)', '', f) for f in stack_str.split(';')]
+                stacks.append(';'.join(funcs) + ' ' + count)
 
         if not stacks:
             raise RuntimeError("No stack counts found")
