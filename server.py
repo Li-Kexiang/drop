@@ -404,7 +404,8 @@ def check_offline():
         conn.close()
         time.sleep(10)
 
-threading.Thread(target=check_offline, daemon=True).start()
+if not DEV_MODE:
+    threading.Thread(target=check_offline, daemon=True).start()
 
 @app.route("/api/audit", methods=["GET"])
 def get_audit():
