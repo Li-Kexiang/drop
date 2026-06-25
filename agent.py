@@ -72,7 +72,16 @@ def execute_perf_task(tid, pid, duration, hz):
     """使用 Linux perf 采集 CPU 调用栈"""
     perf = shutil.which('perf')
     if not perf:
+        # 尝试常见绝对路径
+        for p in ['/usr/bin/perf', '/usr/lib/linux-tools/*/perf']:
+            import glob
+            candidates = glob.glob(p)
+            if candidates:
+                perf = candidates[0]
+                break
+    if not perf:
         raise RuntimeError("perf not found, install linux-tools-common")
+    logger.info(f"[perf] Using: {perf}")
     with tempfile.TemporaryDirectory() as tmp:
         data = os.path.join(tmp, "perf.data")
         logger.info(f"[perf] Recording PID {pid} for {duration}s at {hz}Hz")
@@ -88,6 +97,11 @@ def execute_perf_task(tid, pid, duration, hz):
 def execute_ebpf_task(tid, pid, duration):
     """使用 bpftrace 采集 IO 事件 (sys_enter_read/sys_enter_write)"""
     bpftrace = shutil.which('bpftrace')
+    if not bpftrace:
+        for p in ['/usr/bin/bpftrace', '/usr/sbin/bpftrace']:
+            if os.path.exists(p):
+                bpftrace = p
+                break
     if not bpftrace:
         raise RuntimeError("bpftrace not found, install bpftrace")
 
@@ -156,6 +170,13 @@ def execute_ebpf_task(tid, pid, duration):
 def execute_pyspy_task(tid, pid, duration):
     """使用 py-spy 采集 Python 进程用户态调用栈"""
     pyspy = shutil.which('py-spy')
+    if not pyspy:
+        # 尝试 venv 中的 py-spy
+        for p in ['venv/bin/py-spy', 'venv/Scripts/py-spy.exe']:
+            candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), p)
+            if os.path.exists(candidate):
+                pyspy = candidate
+                break
     if not pyspy:
         raise RuntimeError("py-spy not found, install with: pip install py-spy")
 

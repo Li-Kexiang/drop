@@ -462,6 +462,15 @@ def continuous_windows():
         return jsonify([])
 
 # ========== 智能归因 API ==========
+@app.route("/api/tasks/<tid>/trigger_analyze", methods=["POST"])
+def trigger_analyze(tid):
+    """手动触发 Analyzer 分析任务"""
+    try:
+        r = requests.post(f"{ANALYZER_URL}/analyze/{tid}", timeout=5)
+        return jsonify({"status": "triggered", "analyzer_response": r.json()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/attribution/<tid>", methods=["POST"])
 def attribution(tid):
     """
