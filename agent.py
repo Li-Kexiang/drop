@@ -1,5 +1,8 @@
-import os, time, uuid, subprocess, tempfile, shutil, requests, logging, json, socket
-from minio import Minio
+import os, time, uuid, subprocess, tempfile, shutil, requests, logging, json, socket, platform
+
+DEV_MODE = os.getenv("DEV_MODE", "").lower() == "true"
+if not DEV_MODE:
+    from minio import Minio
 
 logging.basicConfig(level=logging.INFO, format='{"time":"%(asctime)s","level":"%(levelname)s","message":"%(message)s"}')
 logger = logging.getLogger("agent")
@@ -7,10 +10,25 @@ logger = logging.getLogger("agent")
 AGENT_ID = os.getenv("AGENT_ID", "agent-" + uuid.uuid4().hex[:6])
 API_SERVER = os.getenv("API_SERVER", "http://localhost:5000")
 ANALYZER_URL = os.getenv("ANALYZER_URL", "http://localhost:5003")
+MINIO_HOST = os.getenv("MINIO_HOST", "localhost:9000")
+LOCAL_STORAGE = os.getenv("LOCAL_STORAGE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_storage"))
 
-mc = Minio(MINIO_HOST, access_key="drop", secret_key="drop1234", secure=False)
-if not mc.bucket_exists("drop"):
-    mc.make_bucket("drop")
+# MinIO 客户端 (仅非 DEV_MODE)
+mc = None
+if not DEV_MODE:
+    mc = Minio(MINIO_HOST, access_key="drop", secret_key="drop1234", secure=False)
+    if not mc.bucket_exists("drop"):
+        mc.make_bucket("drop")
+
+
+def store_file(key, local_path):
+    """存储文件 (MinIO 或本地)"""
+    if DEV_MODE:
+        dest = os.path.join(LOCAL_STORAGE, key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy(local_path, dest)
+    else:
+        mc.fput_object("drop", key, local_path)
 
 
 def get_ip():
@@ -23,7 +41,7 @@ def get_ip():
 def heartbeat():
     try:
         requests.post(f"{API_SERVER}/api/agents/heartbeat",
-                       json={"agent_id": AGENT_ID, "hostname": os.uname().nodename, "ip": get_ip()},
+                       json={"agent_id": AGENT_ID, "hostname": platform.uname().node, "ip": get_ip()},
                        timeout=5)
     except Exception as e:
         logger.error(f"Heartbeat error: {e}")
@@ -62,7 +80,7 @@ def execute_perf_task(tid, pid, duration, hz):
                         "-p", str(pid), "-o", data, "--", "sleep", str(duration)],
                        check=True, timeout=duration + 30)
         key = f"tasks/{tid}/perf.data"
-        mc.fput_object("drop", key, data)
+        store_file(key, data)
         return key
 
 
@@ -127,7 +145,7 @@ def execute_ebpf_task(tid, pid, duration):
         f.write(folded_data)
         f.flush()
         cos_key = f"tasks/{tid}/ebpf_folded.txt"
-        mc.fput_object("drop", cos_key, f.name)
+        store_file(cos_key, f.name)
         os.unlink(f.name)
 
     logger.info(f"[eBPF] Collected {len(lines)} stack entries")
@@ -159,7 +177,7 @@ def execute_pyspy_task(tid, pid, duration):
         raise
 
     cos_key = f"tasks/{tid}/pyspy_folded.txt"
-    mc.fput_object("drop", cos_key, folded_path)
+    store_file(cos_key, folded_path)
     os.unlink(folded_path)
 
     logger.info(f"[py-spy] Collection done")
@@ -193,7 +211,7 @@ def continuous_profiling_loop():
                                 "-p", str(CONTINUOUS_PID), "-o", data, "--", "sleep", str(CONTINUOUS_DURATION)],
                                check=True, timeout=CONTINUOUS_DURATION + 30)
                 key = f"continuous/{cid}/perf.data"
-                mc.fput_object("drop", key, data)
+                store_file(key, data)
                 # 自动触发分析
                 try:
                     requests.post(f"{ANALYZER_URL}/analyze_continuous/{cid}", timeout=5)
@@ -235,7 +253,7 @@ def execute_task(task):
 
 
 def main():
-    logger.info(f"Agent {AGENT_ID} starting on {os.uname().nodename}")
+    logger.info(f"Agent {AGENT_ID} starting on {platform.uname().node}")
 
     if CONTINUOUS_PROFILING_ENABLED:
         import threading

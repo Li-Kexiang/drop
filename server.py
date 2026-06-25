@@ -1,9 +1,13 @@
-import os, time, json, uuid, logging, threading, requests
+import os, time, json, uuid, logging, threading, requests, sqlite3
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from minio import Minio
+
+DEV_MODE = os.getenv("DEV_MODE", "").lower() == "true"
+
+if not DEV_MODE:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    from minio import Minio
 
 logging.basicConfig(level=logging.INFO, format='{"time":"%(asctime)s","level":"%(levelname)s","message":"%(message)s"}')
 app = Flask(__name__)
@@ -16,56 +20,199 @@ DB_PORT = os.getenv("DB_PORT", "5433")
 DB_NAME = os.getenv("DB_NAME", "drop")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+SQLITE_PATH = os.getenv("SQLITE_PATH", "drop_dev.db")
 DB_DSN = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
 
 # MinIO 连接
+MINIO_HOST = os.getenv("MINIO_HOST", "127.0.0.1:9000")
 ANALYZER_URL = os.getenv("ANALYZER_URL", "http://localhost:5003")
-def get_db():
-    return psycopg2.connect(DB_DSN)
+LOCAL_STORAGE = os.getenv("LOCAL_STORAGE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_storage"))
 
-mc = Minio(MINIO_HOST, access_key="drop", secret_key="drop1234", secure=False)
-if not mc.bucket_exists("drop"):
-    mc.make_bucket("drop")
+
+def get_db():
+    """获取数据库连接 (PostgreSQL 或 SQLite)"""
+    if DEV_MODE:
+        conn = sqlite3.connect(SQLITE_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+    else:
+        return psycopg2.connect(DB_DSN)
+
+
+# MinIO 客户端 (仅非 DEV_MODE)
+mc = None
+if not DEV_MODE:
+    mc = Minio(MINIO_HOST, access_key="drop", secret_key="drop1234", secure=False)
+    if not mc.bucket_exists("drop"):
+        mc.make_bucket("drop")
+
+
+def _ensure_storage_dir(subdir=""):
+    """确保本地存储目录存在"""
+    path = os.path.join(LOCAL_STORAGE, subdir)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def store_file(bucket, key, local_path):
+    """存储文件 (MinIO 或本地)"""
+    if DEV_MODE:
+        dest = os.path.join(LOCAL_STORAGE, key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        import shutil
+        shutil.copy(local_path, dest)
+    else:
+        mc.fput_object(bucket, key, local_path)
+
+
+def get_file(bucket, key, local_path):
+    """获取文件 (MinIO 或本地)"""
+    if DEV_MODE:
+        src = os.path.join(LOCAL_STORAGE, key)
+        import shutil
+        shutil.copy(src, local_path)
+    else:
+        mc.fget_object(bucket, key, local_path)
+
+
+def stat_object(bucket, key):
+    """检查对象是否存在"""
+    if DEV_MODE:
+        return os.path.exists(os.path.join(LOCAL_STORAGE, key))
+    else:
+        mc.stat_object(bucket, key)
+        return True
+
+
+def list_objects(bucket, prefix=""):
+    """列出对象"""
+    if DEV_MODE:
+        results = []
+        base = os.path.join(LOCAL_STORAGE, prefix)
+        if os.path.exists(base):
+            for root, dirs, files in os.walk(base):
+                for f in files:
+                    full = os.path.join(root, f)
+                    rel = os.path.relpath(full, LOCAL_STORAGE).replace("\\", "/")
+                    results.append(rel)
+        return results
+    else:
+        return [obj.object_name for obj in mc.list_objects(bucket, prefix=prefix, recursive=True)]
+
+
+def get_object_data(bucket, key):
+    """获取对象内容"""
+    if DEV_MODE:
+        path = os.path.join(LOCAL_STORAGE, key)
+        with open(path, 'rb') as f:
+            return f.read()
+    else:
+        data = mc.get_object(bucket, key)
+        content = data.read()
+        data.close()
+        return content
+
+def _q(sql):
+    """将 PostgreSQL 风格 %s 占位符转为 SQLite 风格 ?"""
+    if DEV_MODE:
+        return sql.replace('%s', '?')
+    return sql
+
+def _dict_cur(conn):
+    """获取字典式游标"""
+    if DEV_MODE:
+        return conn.cursor()
+    return conn.cursor(cursor_factory=RealDictCursor)
+
+def _fetchall(cur):
+    """获取所有行（统一为字典格式）"""
+    rows = cur.fetchall()
+    if DEV_MODE:
+        return [dict(r) for r in rows]
+    return rows
+
+def _fetchone(cur):
+    """获取一行（统一为字典格式）"""
+    row = cur.fetchone()
+    if DEV_MODE and row:
+        return dict(row)
+    return row
+
 
 def init_db():
     conn = get_db()
     cur = conn.cursor()
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS tasks (
-            tid TEXT PRIMARY KEY,
-            pid INTEGER,
-            duration INTEGER,
-            hz INTEGER,
-            profiler TEXT,
-            status TEXT DEFAULT 'PENDING',
-            reason TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS agents (
-            agent_id TEXT PRIMARY KEY,
-            hostname TEXT,
-            ip TEXT,
-            last_heartbeat TIMESTAMP,
-            status TEXT DEFAULT 'ONLINE',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id SERIAL PRIMARY KEY,
-            agent_id TEXT,
-            event TEXT,
-            details TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    if DEV_MODE:
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS tasks (
+                tid TEXT PRIMARY KEY,
+                pid INTEGER,
+                duration INTEGER,
+                hz INTEGER,
+                profiler TEXT,
+                status TEXT DEFAULT 'PENDING',
+                reason TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS agents (
+                agent_id TEXT PRIMARY KEY,
+                hostname TEXT,
+                ip TEXT,
+                last_heartbeat TIMESTAMP,
+                status TEXT DEFAULT 'ONLINE',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT,
+                event TEXT,
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+    else:
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS tasks (
+                tid TEXT PRIMARY KEY,
+                pid INTEGER,
+                duration INTEGER,
+                hz INTEGER,
+                profiler TEXT,
+                status TEXT DEFAULT 'PENDING',
+                reason TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS agents (
+                agent_id TEXT PRIMARY KEY,
+                hostname TEXT,
+                ip TEXT,
+                last_heartbeat TIMESTAMP,
+                status TEXT DEFAULT 'ONLINE',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id SERIAL PRIMARY KEY,
+                agent_id TEXT,
+                event TEXT,
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
     conn.commit()
     cur.close()
     conn.close()
-    logger.info("DB init")
+    logger.info("DB init" + (" (SQLite dev mode)" if DEV_MODE else ""))
 
 init_db()
 
@@ -85,9 +232,9 @@ def index():
 @app.route('/api/tasks', methods=['GET'])
 def list_tasks():
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = _dict_cur(conn)
     cur.execute("SELECT * FROM tasks ORDER BY created_at DESC")
-    tasks = cur.fetchall()
+    tasks = _fetchall(cur)
     cur.close()
     conn.close()
     return jsonify(tasks)
@@ -100,16 +247,16 @@ def heartbeat():
         return jsonify({"error":"agent_id required"}), 400
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT status FROM agents WHERE agent_id=%s", (aid,))
+    cur.execute(_q("SELECT status FROM agents WHERE agent_id=%s"), (aid,))
     row = cur.fetchone()
-    if row and row[0] == 'OFFLINE':
+    if row and (row[0] if not DEV_MODE else row['status']) == 'OFFLINE':
         audit(aid, "AGENT_RECOVERED", f"Agent {aid} recovered")
-    cur.execute('''
+    cur.execute(_q('''
         INSERT INTO agents (agent_id, hostname, ip, last_heartbeat, status)
         VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 'ONLINE')
         ON CONFLICT (agent_id) DO UPDATE
         SET last_heartbeat = CURRENT_TIMESTAMP, status = 'ONLINE'
-    ''', (aid, data.get('hostname',''), data.get('ip','')))
+    '''), (aid, data.get('hostname',''), data.get('ip','')))
     conn.commit()
     cur.close()
     conn.close()
@@ -118,9 +265,9 @@ def heartbeat():
 @app.route('/api/agents', methods=['GET'])
 def list_agents():
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = _dict_cur(conn)
     cur.execute("SELECT agent_id, hostname, ip, last_heartbeat, status FROM agents ORDER BY created_at DESC")
-    agents = cur.fetchall()
+    agents = _fetchall(cur)
     cur.close()
     conn.close()
     return jsonify(agents)
@@ -132,20 +279,20 @@ def create_task():
     dur = data.get('duration', 5)
     hz = data.get('hz', 99)
     aid = data.get('agent_id')
-    if not pid or not aid:
+    if pid is None or not aid:
         return jsonify({"error":"pid and agent_id required"}), 400
     conn = get_db()
     cur = conn.cursor()
-    cur.execute('''
+    cur.execute(_q('''
         INSERT INTO agents (agent_id, hostname, ip, last_heartbeat, status)
         VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 'ONLINE')
         ON CONFLICT DO NOTHING
-    ''', (aid, 'unknown', 'unknown'))
+    '''), (aid, 'unknown', 'unknown'))
     tid = "task-" + uuid.uuid4().hex[:8]
-    cur.execute('''
+    cur.execute(_q('''
         INSERT INTO tasks (tid, pid, duration, hz, profiler, status, reason, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, 'PENDING', 'Task created', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ''', (tid, pid, dur, hz, data.get('profiler', 'perf')))
+    '''), (tid, pid, dur, hz, data.get('profiler', 'perf')))
     conn.commit()
     cur.close()
     conn.close()
@@ -155,11 +302,11 @@ def create_task():
 @app.route('/api/agents/<aid>/tasks/pending', methods=['GET'])
 def get_pending(aid):
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = _dict_cur(conn)
     cur.execute("SELECT tid, pid, duration, hz, profiler FROM tasks WHERE status='PENDING' ORDER BY created_at LIMIT 1")
-    task = cur.fetchone()
+    task = _fetchone(cur)
     if task:
-        cur.execute("UPDATE tasks SET status='RUNNING', reason='Agent picked up', updated_at=CURRENT_TIMESTAMP WHERE tid=%s", (task['tid'],))
+        cur.execute(_q("UPDATE tasks SET status='RUNNING', reason='Agent picked up', updated_at=CURRENT_TIMESTAMP WHERE tid=%s"), (task['tid'],))
         conn.commit()
     cur.close()
     conn.close()
@@ -175,7 +322,7 @@ def task_result(tid):
     reason = data.get('reason', '')
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("UPDATE tasks SET status=%s, reason=%s, updated_at=CURRENT_TIMESTAMP WHERE tid=%s", (status, reason, tid))
+    cur.execute(_q("UPDATE tasks SET status=%s, reason=%s, updated_at=CURRENT_TIMESTAMP WHERE tid=%s"), (status, reason, tid))
     conn.commit()
     cur.close()
     conn.close()
@@ -187,18 +334,21 @@ def task_result(tid):
 @app.route('/api/tasks/<tid>', methods=['GET'])
 def get_task(tid):
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT * FROM tasks WHERE tid=%s", (tid,))
-    task = cur.fetchone()
+    cur = _dict_cur(conn)
+    cur.execute(_q("SELECT * FROM tasks WHERE tid=%s"), (tid,))
+    task = _fetchone(cur)
     cur.close()
     conn.close()
     if not task:
         return jsonify({"error":"not found"}), 404
     if task['status'] == 'DONE':
         try:
-            tid = task['tid']
-            task['flamegraph_url'] = f"http://localhost:9000/drop/tasks/{tid}/flamegraph.svg"
-            task['heatmap_url'] = f"http://localhost:9000/drop/tasks/{tid}/heatmap.json"
+            if DEV_MODE:
+                task['flamegraph_url'] = f"/api/storage/tasks/{tid}/flamegraph.svg"
+                task['heatmap_url'] = f"/api/storage/tasks/{tid}/heatmap.json"
+            else:
+                task['flamegraph_url'] = f"http://localhost:9000/drop/tasks/{tid}/flamegraph.svg"
+                task['heatmap_url'] = f"http://localhost:9000/drop/tasks/{tid}/heatmap.json"
         except Exception as e:
             logger.error(f"URL generation failed: {e}")
     return jsonify(task)
@@ -206,26 +356,44 @@ def get_task(tid):
 @app.route("/api/tasks/<tid>/heatmap", methods=["GET"])
 def get_heatmap(tid):
     try:
-        import json
-        data = mc.get_object("drop", f"tasks/{tid}/heatmap.json")
-        content = data.read().decode("utf-8")
-        data.close()
-        return jsonify(json.loads(content))
+        content = get_object_data("drop", f"tasks/{tid}/heatmap.json")
+        return jsonify(json.loads(content.decode("utf-8")))
     except Exception as e:
         return jsonify({"error": str(e)}), 404
+
+
+@app.route("/api/storage/<path:key>")
+def local_storage_proxy(key):
+    """开发模式：直接提供本地存储文件"""
+    if not DEV_MODE:
+        return jsonify({"error": "only available in dev mode"}), 404
+    path = os.path.join(LOCAL_STORAGE, key)
+    if not os.path.exists(path):
+        return jsonify({"error": "not found"}), 404
+    return send_file(path)
+
 
 def check_offline():
     while True:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute('''
-            UPDATE agents SET status='OFFLINE'
-            WHERE last_heartbeat < CURRENT_TIMESTAMP - INTERVAL '30 seconds'
-            AND status='ONLINE'
-            RETURNING agent_id
-        ''')
+        if DEV_MODE:
+            cur.execute("""
+                UPDATE agents SET status='OFFLINE'
+                WHERE last_heartbeat < datetime('now', '-30 seconds')
+                AND status='ONLINE'
+            """)
+            cur.execute("SELECT agent_id FROM agents WHERE status='OFFLINE' AND last_heartbeat < datetime('now', '-30 seconds')")
+        else:
+            cur.execute('''
+                UPDATE agents SET status='OFFLINE'
+                WHERE last_heartbeat < CURRENT_TIMESTAMP - INTERVAL '30 seconds'
+                AND status='ONLINE'
+                RETURNING agent_id
+            ''')
         off = cur.fetchall()
-        for (aid,) in off:
+        for row in off:
+            aid = row[0] if isinstance(row, tuple) else row['agent_id']
             audit(aid, "AGENT_OFFLINE", f"Agent {aid} offline")
         conn.commit()
         cur.close()
@@ -237,9 +405,9 @@ threading.Thread(target=check_offline, daemon=True).start()
 @app.route("/api/audit", methods=["GET"])
 def get_audit():
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = _dict_cur(conn)
     cur.execute("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 50")
-    logs = cur.fetchall()
+    logs = _fetchall(cur)
     cur.close()
     conn.close()
     return jsonify(logs)
@@ -266,10 +434,13 @@ def continuous_stop():
 def continuous_windows():
     """列出 continuous profiling 的时间窗口"""
     try:
-        objects = mc.list_objects("drop", prefix="continuous/", recursive=True)
+        if DEV_MODE:
+            objs = list_objects("drop", "continuous/")
+        else:
+            objs = [obj.object_name for obj in mc.list_objects("drop", prefix="continuous/", recursive=True)]
         windows = {}
-        for obj in objects:
-            parts = obj.object_name.split('/')
+        for name in objs:
+            parts = name.split('/')
             if len(parts) >= 2:
                 cid = parts[1]
                 if cid not in windows:
@@ -278,7 +449,7 @@ def continuous_windows():
                     except ValueError:
                         ts = 0
                     windows[cid] = {"cid": cid, "ts": ts, "has_data": False}
-                if "flamegraph.svg" in obj.object_name:
+                if "flamegraph.svg" in name:
                     windows[cid]["has_data"] = True
         result = sorted(windows.values(), key=lambda x: x["ts"], reverse=True)[:20]
         return jsonify(result)
@@ -298,9 +469,9 @@ def attribution(tid):
     try:
         # 获取任务元信息
         conn = get_db()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT * FROM tasks WHERE tid=%s", (tid,))
-        task = cur.fetchone()
+        cur = _dict_cur(conn)
+        cur.execute(_q("SELECT * FROM tasks WHERE tid=%s"), (tid,))
+        task = _fetchone(cur)
         cur.close()
         conn.close()
 
@@ -309,9 +480,8 @@ def attribution(tid):
 
         # 获取热力图数据（函数采样计数）
         try:
-            data = mc.get_object("drop", f"tasks/{tid}/heatmap.json")
-            heatmap_data = _json.loads(data.read().decode("utf-8"))
-            data.close()
+            content = get_object_data("drop", f"tasks/{tid}/heatmap.json")
+            heatmap_data = _json.loads(content.decode("utf-8"))
         except Exception:
             heatmap_data = []
 

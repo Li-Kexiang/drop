@@ -18,3 +18,8 @@ venv/
 *.heatmap.bak
 *.audit.bak
 .DS_Store
+# 开发模式本地数据
+data_storage/
+drop_dev.db
+FlameGraph/
+gen_flame.py

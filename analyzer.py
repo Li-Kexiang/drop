@@ -1,15 +1,47 @@
 import os, time, subprocess, tempfile, json, logging, collections, threading, shutil
 from flask import Flask, request, jsonify
-from minio import Minio
+
+DEV_MODE = os.getenv("DEV_MODE", "").lower() == "true"
+if not DEV_MODE:
+    from minio import Minio
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='{"time":"%(asctime)s","level":"%(levelname)s","message":"%(message)s"}')
 logger = logging.getLogger("analyzer")
 
 MINIO_HOST = os.getenv("MINIO_HOST", "localhost:9000")
-mc = Minio(MINIO_HOST, access_key="drop", secret_key="drop1234", secure=False)
-if not mc.bucket_exists("drop"):
-    mc.make_bucket("drop")
+LOCAL_STORAGE = os.getenv("LOCAL_STORAGE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_storage"))
+
+mc = None
+if not DEV_MODE:
+    mc = Minio(MINIO_HOST, access_key="drop", secret_key="drop1234", secure=False)
+    if not mc.bucket_exists("drop"):
+        mc.make_bucket("drop")
+
+
+def store_file(key, local_path):
+    if DEV_MODE:
+        dest = os.path.join(LOCAL_STORAGE, key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy(local_path, dest)
+    else:
+        mc.fput_object("drop", key, local_path)
+
+
+def get_file(key, local_path):
+    if DEV_MODE:
+        src = os.path.join(LOCAL_STORAGE, key)
+        shutil.copy(src, local_path)
+    else:
+        mc.fget_object("drop", key, local_path)
+
+
+def stat_obj(key):
+    if DEV_MODE:
+        return os.path.exists(os.path.join(LOCAL_STORAGE, key))
+    else:
+        mc.stat_object("drop", key)
+        return True
 
 
 def heatmap_json(folded_path):
@@ -48,16 +80,16 @@ def generate_flamegraph(folded_path, svg_path):
 
 
 def upload_artifacts(tid, folded_path, prefix="tasks"):
-    """上传火焰图和热力图到 MinIO"""
+    """上传火焰图和热力图到 MinIO/本地"""
     svg_path = folded_path + ".svg"
     generate_flamegraph(folded_path, svg_path)
-    mc.fput_object("drop", f"{prefix}/{tid}/flamegraph.svg", svg_path)
+    store_file(f"{prefix}/{tid}/flamegraph.svg", svg_path)
 
     hm = heatmap_json(folded_path)
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(hm, f)
         f.flush()
-        mc.fput_object("drop", f"{prefix}/{tid}/heatmap.json", f.name)
+        store_file(f"{prefix}/{tid}/heatmap.json", f.name)
         os.unlink(f.name)
 
     os.unlink(svg_path)
@@ -67,7 +99,7 @@ def upload_artifacts(tid, folded_path, prefix="tasks"):
 def process_perf(tid):
     """处理 perf 采集数据"""
     local = f"/tmp/{tid}.perf.data"
-    mc.fget_object("drop", f"tasks/{tid}/perf.data", local)
+    get_file(f"tasks/{tid}/perf.data", local)
 
     with tempfile.TemporaryDirectory() as tmp:
         script = os.path.join(tmp, "perf.script")
@@ -89,7 +121,7 @@ def process_perf(tid):
 def process_ebpf(tid):
     """处理 eBPF 采集数据 (已经是折叠栈格式)"""
     folded_local = f"/tmp/{tid}.ebpf.folded"
-    mc.fget_object("drop", f"tasks/{tid}/ebpf_folded.txt", folded_local)
+    get_file(f"tasks/{tid}/ebpf_folded.txt", folded_local)
 
     if os.path.getsize(folded_local) == 0:
         raise RuntimeError("empty ebpf folded data")
@@ -101,7 +133,7 @@ def process_ebpf(tid):
 def process_pyspy(tid):
     """处理 py-spy 采集数据 (已经是折叠栈格式)"""
     folded_local = f"/tmp/{tid}.pyspy.folded"
-    mc.fget_object("drop", f"tasks/{tid}/pyspy_folded.txt", folded_local)
+    get_file(f"tasks/{tid}/pyspy_folded.txt", folded_local)
 
     if os.path.getsize(folded_local) == 0:
         raise RuntimeError("empty py-spy folded data")
@@ -115,29 +147,20 @@ def process(tid):
     logger.info(f"Analyzing {tid}")
     try:
         # 检测数据类型
-        try:
-            mc.stat_object("drop", f"tasks/{tid}/ebpf_folded.txt")
+        if stat_obj(f"tasks/{tid}/ebpf_folded.txt"):
             logger.info(f"Detected eBPF data for {tid}")
             process_ebpf(tid)
             return
-        except Exception:
-            pass
 
-        try:
-            mc.stat_object("drop", f"tasks/{tid}/pyspy_folded.txt")
+        if stat_obj(f"tasks/{tid}/pyspy_folded.txt"):
             logger.info(f"Detected py-spy data for {tid}")
             process_pyspy(tid)
             return
-        except Exception:
-            pass
 
-        try:
-            mc.stat_object("drop", f"tasks/{tid}/perf.data")
+        if stat_obj(f"tasks/{tid}/perf.data"):
             logger.info(f"Detected perf data for {tid}")
             process_perf(tid)
             return
-        except Exception:
-            pass
 
         raise RuntimeError(f"No data found for task {tid}")
 
@@ -150,7 +173,7 @@ def process_continuous(cid):
     logger.info(f"Analyzing continuous window {cid}")
     try:
         local = f"/tmp/{cid}.perf.data"
-        mc.fget_object("drop", f"continuous/{cid}/perf.data", local)
+        get_file(f"continuous/{cid}/perf.data", local)
 
         with tempfile.TemporaryDirectory() as tmp:
             script = os.path.join(tmp, "perf.script")
