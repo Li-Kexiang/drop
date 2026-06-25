@@ -70,18 +70,17 @@ def report(tid, status, reason="", cos_key=""):
 # ========== perf 采集器 ==========
 def execute_perf_task(tid, pid, duration, hz):
     """使用 Linux perf 采集 CPU 调用栈"""
-    perf = shutil.which('perf')
+    # 直接使用绝对路径，避免 PATH 问题
+    perf = None
+    for p in ['/usr/bin/perf', '/usr/lib/linux-tools/perf']:
+        if os.path.exists(p):
+            perf = p
+            break
     if not perf:
-        # 尝试常见绝对路径
-        for p in ['/usr/bin/perf', '/usr/lib/linux-tools/*/perf']:
-            import glob
-            candidates = glob.glob(p)
-            if candidates:
-                perf = candidates[0]
-                break
+        perf = shutil.which('perf')
     if not perf:
-        raise RuntimeError("perf not found, install linux-tools-common")
-    logger.info(f"[perf] Using: {perf}")
+        raise RuntimeError("perf not found at /usr/bin/perf. Run: sudo apt install linux-tools-common")
+    logger.info(f"[perf] FOUND at {perf}, recording PID {pid} for {duration}s")
     with tempfile.TemporaryDirectory() as tmp:
         data = os.path.join(tmp, "perf.data")
         logger.info(f"[perf] Recording PID {pid} for {duration}s at {hz}Hz")

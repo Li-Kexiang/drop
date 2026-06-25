@@ -23,11 +23,14 @@ export SQLITE_PATH="$(pwd)/drop_dev.db"
 export LOCAL_STORAGE="$(pwd)/data_storage"
 mkdir -p "$LOCAL_STORAGE/tasks" "$LOCAL_STORAGE/continuous"
 
-# 3. 停旧进程
-pkill -f "python.*server.py" 2>/dev/null || true
-pkill -f "python.*agent.py" 2>/dev/null || true
-pkill -f "python.*analyzer.py" 2>/dev/null || true
-sleep 1
+# 3. 停旧进程 (force kill all python)
+for pid in $(ps aux | grep '[p]ython.*drop' | awk '{print $2}'); do
+    kill -9 $pid 2>/dev/null
+done
+# 释放端口
+fuser -k 5000/tcp 2>/dev/null
+fuser -k 5003/tcp 2>/dev/null
+sleep 2
 
 # 4. 用 venv 的 Python 启动所有服务
 echo ""
