@@ -1,11 +1,12 @@
-.PHONY: demo demo-docker up down clean test e2e help
+.PHONY: demo dev demo-docker up down clean test e2e help
 
 # 默认目标
 help:
 	@echo "Drop - 一站式性能分析平台"
 	@echo ""
 	@echo "用法:"
-	@echo "  make demo         本地开发模式启动（Python 虚拟环境 + 独立 Docker 容器）"
+	@echo "  make dev          开发模式一键启动（SQLite + 本地存储）"
+	@echo "  make demo         Docker 模式启动（PostgreSQL + MinIO）"
 	@echo "  make demo-docker  一键 Docker Compose 启动"
 	@echo "  make up           Docker Compose 启动"
 	@echo "  make down         Docker Compose 停止"
@@ -13,7 +14,39 @@ help:
 	@echo "  make e2e          运行端到端集成测试"
 	@echo "  make clean        清理环境"
 
-# Docker Compose 一键启动 (推荐)
+# ========== 开发模式一键启动（推荐）==========
+dev:
+	@echo "🔥 Drop 开发模式一键启动..."
+	@echo ""
+	@# 检查并设置 perf 权限
+	@if [ "$$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null)" != "0" ]; then \
+		echo "🔧 降低 perf 安全限制..."; \
+		sudo sysctl -w kernel.perf_event_paranoid=0 2>/dev/null || echo "⚠️  请手动执行: sudo sysctl -w kernel.perf_event_paranoid=0"; \
+		sudo sysctl -w kernel.yama.ptrace_scope=0 2>/dev/null || echo "⚠️  请手动执行: sudo sysctl -w kernel.yama.ptrace_scope=0"; \
+	fi
+	@# 创建 venv
+	@if [ ! -d "venv" ]; then \
+		echo "📦 创建虚拟环境..."; \
+		python3 -m venv venv; \
+		venv/bin/pip install -q -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt; \
+	fi
+	@# 下载 cloudflared
+	@if [ ! -f "/tmp/cloudflared" ]; then \
+		curl -sL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64; \
+		chmod +x /tmp/cloudflared; \
+	fi
+	@echo ""
+	@echo "🚀 启动所有服务..."
+	@bash start_all.sh
+
+# Docker Compose 一键启动
+demo: up
+	@echo ""
+	@echo "===== Drop 启动完成 ====="
+	@echo "Web UI:   http://localhost:5000"
+	@echo "MinIO控制台: http://localhost:9001 (drop/drop1234)"
+	@echo ""
+
 demo-docker: up
 	@echo ""
 	@echo "===== Drop 启动完成 ====="
@@ -30,12 +63,12 @@ up:
 down:
 	docker compose down -v
 
-# 本地开发模式
+# 本地开发模式（需要 Docker）
 demo:
-	@echo "启动 Drop 系统（本地开发模式）..."
+	@echo "启动 Drop 系统（Docker 模式）..."
 	@echo "创建虚拟环境..."
 	python3 -m venv venv || true
-	venv/bin/pip install -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
+	venv/bin/pip install -q -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
 	@echo "启动 PostgreSQL 和 MinIO..."
 	-docker run -d --name postgres-single -p 5433:5432 -e POSTGRES_DB=drop -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres postgres:14
 	-docker run -d --name minio-single -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=drop -e MINIO_ROOT_PASSWORD=drop1234 minio/minio server /data --console-address ":9001"
@@ -45,6 +78,10 @@ demo:
 	@echo "启动微服务..."
 	venv/bin/python server.py &
 	venv/bin/python agent.py &
+	venv/bin/python analyzer.py &
+	sleep 3
+	@echo ""
+	@echo "===== Drop 启动完成 ====="
 	venv/bin/python analyzer.py &
 	sleep 3
 	@echo ""
