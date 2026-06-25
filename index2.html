@@ -129,7 +129,21 @@ h1{font-size:28px;font-weight:600;color:#111827;margin:0 0 8px 0}
 </div>
 
 <script>
-const AGENT_ID = 'agent-abc123';
+let AGENT_ID = 'agent-abc123';
+
+// 自动获取真实的 Agent ID
+async function initAgentId() {
+  try {
+    const res = await axios.get('/api/agents');
+    const online = res.data.filter(a => a.status === 'ONLINE');
+    if (online.length > 0) {
+      AGENT_ID = online[0].agent_id;
+      document.getElementById('agent-id').innerText = AGENT_ID;
+    }
+  } catch(e) { console.log('Agent init delayed'); }
+  setTimeout(initAgentId, 15000); // 每15秒刷新
+}
+initAgentId();
 let currentTaskId = null;
 let heatmapChart = null;
 let continuousTimer = null;
