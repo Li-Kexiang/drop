@@ -143,6 +143,8 @@ drop/
 ## 演示视频
 
 视频链接：https://share.weiyun.com/Z33242uo
+后续调试过程中新版本的drop功能演示视频链接：
+https://share.weiyun.com/ZK6iRYFi
 
 ## 设计文档
 
