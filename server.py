@@ -346,16 +346,20 @@ def get_task(tid):
     # 处理 continuous-* 窗口（不在 tasks 表中，直接查存储）
     if tid.startswith("continuous-"):
         has_flame = stat_object("drop", f"continuous/{tid}/flamegraph.svg")
-        if not has_flame:
+        has_heat = stat_object("drop", f"continuous/{tid}/heatmap.json")
+        if not has_flame and not has_heat:
             return jsonify({"error":"continuous window not found or not yet analyzed"}), 404
-        return jsonify({
+        result = {
             "tid": tid,
             "status": "DONE",
             "profiler": "perf",
             "reason": "continuous profiling window",
-            "flamegraph_url": f"/api/storage/continuous/{tid}/flamegraph.svg",
-            "heatmap_url": f"/api/storage/continuous/{tid}/heatmap.json",
-        })
+        }
+        if has_flame:
+            result["flamegraph_url"] = f"/api/storage/continuous/{tid}/flamegraph.svg"
+        if has_heat:
+            result["heatmap_url"] = f"/api/storage/continuous/{tid}/heatmap.json"
+        return jsonify(result)
 
     conn = get_db()
     cur = _dict_cur(conn)
@@ -367,12 +371,13 @@ def get_task(tid):
         return jsonify({"error":"not found"}), 404
     if task['status'] == 'DONE':
         try:
-            if DEV_MODE:
-                task['flamegraph_url'] = f"/api/storage/tasks/{tid}/flamegraph.svg"
-                task['heatmap_url'] = f"/api/storage/tasks/{tid}/heatmap.json"
-            else:
-                task['flamegraph_url'] = f"http://localhost:9000/drop/tasks/{tid}/flamegraph.svg"
-                task['heatmap_url'] = f"http://localhost:9000/drop/tasks/{tid}/heatmap.json"
+            prefix = "tasks"
+            has_flame = stat_object("drop", f"{prefix}/{tid}/flamegraph.svg")
+            has_heat = stat_object("drop", f"{prefix}/{tid}/heatmap.json")
+            if has_flame:
+                task['flamegraph_url'] = f"/api/storage/{prefix}/{tid}/flamegraph.svg" if DEV_MODE else f"http://localhost:9000/drop/{prefix}/{tid}/flamegraph.svg"
+            if has_heat:
+                task['heatmap_url'] = f"/api/storage/{prefix}/{tid}/heatmap.json" if DEV_MODE else f"http://localhost:9000/drop/{prefix}/{tid}/heatmap.json"
         except Exception as e:
             logger.error(f"URL generation failed: {e}")
     return jsonify(task)
@@ -427,6 +432,8 @@ def check_offline():
         time.sleep(10)
 
 if not DEV_MODE:
+    threading.Thread(target=check_offline, daemon=True).start()
+else:
     threading.Thread(target=check_offline, daemon=True).start()
 
 @app.route("/api/audit", methods=["GET"])

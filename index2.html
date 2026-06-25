@@ -342,10 +342,12 @@ function loadContinuousWindows() {
     }
     let html = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
     windows.forEach(w => {
-      html += `<div style="padding:8px 16px;background:#f9fafb;border-radius:8px;font-size:13px;cursor:pointer"
-        onclick="showFlame('${w.cid}')" title="点击查看火焰图">
-        <strong>${new Date(w.ts*1000).toLocaleTimeString()}</strong>
-        <span style="color:#10b981;margin-left:8px">${w.has_data ? '✅' : '⏳'}</span>
+      html += `<div style="padding:8px 16px;background:#f9fafb;border-radius:8px;font-size:13px">
+        <span style="cursor:pointer" onclick="showFlame('${w.cid}')" title="点击查看火焰图">
+          <strong>${new Date(w.ts*1000).toLocaleTimeString()}</strong>
+          <span style="color:#10b981;margin-left:8px">${w.has_data ? '✅' : '⏳'}</span>
+        </span>
+        ${w.has_data ? `<button class="btn-sm" onclick="event.stopPropagation();showHeatmap('${w.cid}')" style="margin-left:6px;font-size:11px">📊</button><button class="btn-sm" onclick="event.stopPropagation();showAttribution('${w.cid}')" style="margin-left:2px;font-size:11px">🤖</button>` : ''}
       </div>`;
     });
     html += '</div>';
