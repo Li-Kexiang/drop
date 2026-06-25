@@ -32,9 +32,10 @@ LOCAL_STORAGE = os.getenv("LOCAL_STORAGE", os.path.join(os.path.dirname(os.path.
 def get_db():
     """获取数据库连接 (PostgreSQL 或 SQLite)"""
     if DEV_MODE:
-        conn = sqlite3.connect(SQLITE_PATH)
+        conn = sqlite3.connect(SQLITE_PATH, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
     else:
         return psycopg2.connect(DB_DSN)
@@ -219,7 +220,7 @@ init_db()
 def audit(aid, evt, det=None):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("INSERT INTO audit_log (agent_id, event, details) VALUES (%s, %s, %s)", (aid, evt, det))
+    cur.execute(_q("INSERT INTO audit_log (agent_id, event, details) VALUES (%s, %s, %s)"), (aid, evt, det))
     conn.commit()
     cur.close()
     conn.close()
@@ -227,7 +228,10 @@ def audit(aid, evt, det=None):
 
 @app.route('/')
 def index():
-    return send_file('index2.html')
+    import os as _os
+    path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'index2.html')
+    with open(path, 'r', encoding='utf-8') as f:
+        return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 @app.route('/api/tasks', methods=['GET'])
 def list_tasks():
