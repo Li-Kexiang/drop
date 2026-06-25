@@ -186,14 +186,41 @@ def execute_pyspy_task(tid, pid, duration):
         folded_path = folded_file.name
 
     try:
-        # py-spy record 输出折叠栈格式
+        # py-spy 0.4.x 不支持 folded 格式，使用 raw 格式然后转换
         result = subprocess.run(
             [pyspy, "record", "-p", str(pid), "-d", str(duration),
-             "-f", "flamegraph", "-o", folded_path],
+             "-f", "raw", "-o", folded_path],
             capture_output=True, text=True, timeout=duration + 30
         )
         if result.returncode != 0:
             raise RuntimeError(f"py-spy failed: {result.stderr}")
+
+        # 将 raw 格式转换为 folded 格式
+        # raw 格式示例:
+        # Thread 12345 (active)
+        #     func1 (file.py:10)
+        #     func2 (file.py:20)
+        #
+        stacks = []
+        current_stack = []
+        with open(folded_path, 'r') as f:
+            for line in f:
+                line = line.rstrip()
+                if line.startswith('Thread ') or line == '':
+                    if current_stack:
+                        stacks.append(';'.join(reversed(current_stack)) + ' 1')
+                        current_stack = []
+                elif line.startswith('    ') or line.startswith('\t'):
+                    func = line.strip().split(' (')[0]
+                    current_stack.append(func)
+            if current_stack:
+                stacks.append(';'.join(reversed(current_stack)) + ' 1')
+
+        if not stacks:
+            raise RuntimeError("No stack counts found")
+
+        with open(folded_path, 'w') as f:
+            f.write('\n'.join(stacks) + '\n')
     except Exception:
         os.unlink(folded_path)
         raise
