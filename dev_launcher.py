@@ -12,12 +12,13 @@ import os
 import sys
 import time
 import subprocess
-import threading
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 设置开发模式环境变量
 os.environ["DEV_MODE"] = "true"
-os.environ["SQLITE_PATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "drop_dev.db")
-os.environ["LOCAL_STORAGE"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_storage")
+os.environ["SQLITE_PATH"] = os.path.join(SCRIPT_DIR, "drop_dev.db")
+os.environ["LOCAL_STORAGE"] = os.path.join(SCRIPT_DIR, "data_storage")
 
 # 创建存储目录
 storage_dir = os.environ["LOCAL_STORAGE"]
@@ -33,10 +34,19 @@ print("=" * 50)
 
 
 def run_module(module_name):
-    """运行一个 Python 模块"""
+    """运行一个 Python 模块，优先使用当前 venv 的 Python"""
+    # 检测 venv 中的 python
+    venv_python = os.path.join(SCRIPT_DIR, "venv", "bin", "python3")
+    if not os.path.exists(venv_python):
+        venv_python = os.path.join(SCRIPT_DIR, "venv", "bin", "python")
+    if not os.path.exists(venv_python):
+        venv_python = os.path.join(SCRIPT_DIR, "venv", "Scripts", "python.exe")
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
+
     proc = subprocess.Popen(
-        [sys.executable, module_name],
-        cwd=os.path.dirname(os.path.abspath(__file__)),
+        [venv_python, module_name],
+        cwd=SCRIPT_DIR,
         env=os.environ.copy()
     )
     return proc
