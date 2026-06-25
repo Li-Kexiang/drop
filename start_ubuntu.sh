@@ -7,6 +7,9 @@ cd "$(dirname "$0")"
 git checkout -- . 2>/dev/null
 git pull origin main 2>/dev/null
 
+# 0.5 清理旧数据库
+rm -f drop_dev.db drop_dev.db-wal drop_dev.db-shm 2>/dev/null
+
 echo "========================================="
 echo "  Drop 开发模式启动"
 echo "========================================="
