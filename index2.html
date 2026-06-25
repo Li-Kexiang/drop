@@ -90,7 +90,10 @@ h1{font-size:28px;font-weight:600;color:#111827;margin:0 0 8px 0}
 </div>
 
 <div id="tab-continuous" style="display:none">
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:16px;padding:12px;background:#f9fafb;border-radius:8px">
+    <label>PID: <input type="number" id="continuous-pid" value="1" min="1" style="width:80px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px"></label>
+    <label>间隔(s): <input type="number" id="continuous-interval" value="30" min="5" max="600" style="width:70px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px"></label>
+    <label>时长(s): <input type="number" id="continuous-duration" value="5" min="1" max="60" style="width:70px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px"></label>
     <button class="btn btn-green" onclick="startContinuous()">▶️ 启动持续分析</button>
     <button class="btn btn-danger" onclick="stopContinuous()">⏹️ 停止</button>
     <span style="font-size:13px;color:#6b7280" id="continuous-status">未启动</span>
@@ -311,7 +314,10 @@ function showAudit() {
 
 // Continuous Profiling
 function startContinuous() {
-  axios.post('/api/continuous/start', { agent_id: AGENT_ID, pid: parseInt(document.getElementById('pid').value)||1 })
+  const pid = parseInt(document.getElementById('continuous-pid').value) || 1;
+  const interval = parseInt(document.getElementById('continuous-interval').value) || 30;
+  const duration = parseInt(document.getElementById('continuous-duration').value) || 5;
+  axios.post('/api/continuous/start', { agent_id: AGENT_ID, pid, interval, duration })
     .then(res => {
       document.getElementById('continuous-status').innerHTML = '✅ 运行中 — ' + res.data.message;
       loadContinuousWindows();

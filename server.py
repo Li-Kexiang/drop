@@ -343,6 +343,20 @@ def task_result(tid):
 
 @app.route('/api/tasks/<tid>', methods=['GET'])
 def get_task(tid):
+    # 处理 continuous-* 窗口（不在 tasks 表中，直接查存储）
+    if tid.startswith("continuous-"):
+        has_flame = stat_object("drop", f"continuous/{tid}/flamegraph.svg")
+        if not has_flame:
+            return jsonify({"error":"continuous window not found or not yet analyzed"}), 404
+        return jsonify({
+            "tid": tid,
+            "status": "DONE",
+            "profiler": "perf",
+            "reason": "continuous profiling window",
+            "flamegraph_url": f"/api/storage/continuous/{tid}/flamegraph.svg",
+            "heatmap_url": f"/api/storage/continuous/{tid}/heatmap.json",
+        })
+
     conn = get_db()
     cur = _dict_cur(conn)
     cur.execute(_q("SELECT * FROM tasks WHERE tid=%s"), (tid,))
@@ -366,7 +380,9 @@ def get_task(tid):
 @app.route("/api/tasks/<tid>/heatmap", methods=["GET"])
 def get_heatmap(tid):
     try:
-        content = get_object_data("drop", f"tasks/{tid}/heatmap.json")
+        # 支持 continuous-* 窗口
+        prefix = "continuous" if tid.startswith("continuous-") else "tasks"
+        content = get_object_data("drop", f"{prefix}/{tid}/heatmap.json")
         return jsonify(json.loads(content.decode("utf-8")))
     except Exception as e:
         return jsonify({"error": str(e)}), 404
@@ -424,7 +440,7 @@ def get_audit():
     return jsonify(logs)
 
 # ========== Continuous Profiling API ==========
-_continuous_state = {"running": False, "pid": 1, "agent_id": None}
+_continuous_state = {"running": False, "pid": 1, "agent_id": None, "interval": 30, "duration": 5}
 
 @app.route("/api/continuous/start", methods=["POST"])
 def continuous_start():
@@ -432,14 +448,22 @@ def continuous_start():
     _continuous_state["running"] = True
     _continuous_state["pid"] = data.get("pid", 1)
     _continuous_state["agent_id"] = data.get("agent_id")
-    logger.info(f"Continuous profiling started for PID {_continuous_state['pid']}")
-    return jsonify({"status": "ok", "message": f"Continuous profiling active for PID {_continuous_state['pid']}"})
+    _continuous_state["interval"] = data.get("interval", 30)
+    _continuous_state["duration"] = data.get("duration", 5)
+    logger.info(f"Continuous profiling started for PID {_continuous_state['pid']}, "
+                f"interval={_continuous_state['interval']}s, duration={_continuous_state['duration']}s")
+    return jsonify({"status": "ok", "message": f"每{_continuous_state['interval']}秒采集{_continuous_state['duration']}秒, PID={_continuous_state['pid']}"})
 
 @app.route("/api/continuous/stop", methods=["POST"])
 def continuous_stop():
     _continuous_state["running"] = False
     logger.info("Continuous profiling stopped")
     return jsonify({"status": "ok", "message": "Continuous profiling stopped"})
+
+@app.route("/api/continuous/state", methods=["GET"])
+def continuous_state_api():
+    """Agent 读取持续分析配置"""
+    return jsonify(_continuous_state)
 
 @app.route("/api/continuous/windows", methods=["GET"])
 def continuous_windows():

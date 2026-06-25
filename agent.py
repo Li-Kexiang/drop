@@ -230,15 +230,15 @@ def execute_pyspy_task(tid, pid, duration):
 
 
 # ========== Continuous Profiling (常驻低频采集) ==========
-CONTINUOUS_PROFILING_ENABLED = os.getenv("CONTINUOUS_PROFILING", "false").lower() == "true"
-CONTINUOUS_INTERVAL = int(os.getenv("CONTINUOUS_INTERVAL", "60"))  # 每 60s 一次
+# 以下环境变量仅作为初始默认值，实际运行时从 Server API 动态读取
+CONTINUOUS_INTERVAL = int(os.getenv("CONTINUOUS_INTERVAL", "30"))  # 每 30s 一次
 CONTINUOUS_DURATION = int(os.getenv("CONTINUOUS_DURATION", "5"))   # 每次采 5s
 CONTINUOUS_PID = int(os.getenv("CONTINUOUS_PID", "1"))
 
 
 def continuous_profiling_loop():
-    """常驻低频采样循环：定时对目标 PID 进行 perf 采样并切割存储"""
-    logger.info(f"[Continuous] Started: PID={CONTINUOUS_PID}, "
+    """常驻低频采样循环：从 Server 动态读取配置，定时对目标 PID 进行 perf 采样并切割存储"""
+    logger.info(f"[Continuous] Started with defaults: PID={CONTINUOUS_PID}, "
                 f"interval={CONTINUOUS_INTERVAL}s, duration={CONTINUOUS_DURATION}s")
 
     perf = shutil.which('perf')
@@ -246,15 +246,39 @@ def continuous_profiling_loop():
         logger.warning("[Continuous] perf not found, continuous profiling disabled")
         return
 
+    interval = CONTINUOUS_INTERVAL
+    duration = CONTINUOUS_DURATION
+    target_pid = CONTINUOUS_PID
+
     while True:
+        # 每次循环从 Server 读取最新配置
+        try:
+            resp = requests.get(f"{API_SERVER}/api/continuous/state", timeout=5)
+            if resp.status_code == 200:
+                state = resp.json()
+                if not state.get("running"):
+                    logger.info("[Continuous] Paused by server, waiting...")
+                    time.sleep(5)
+                    continue
+                new_pid = state.get("pid", target_pid)
+                new_interval = state.get("interval", interval)
+                new_duration = state.get("duration", duration)
+                if new_pid != target_pid or new_interval != interval or new_duration != duration:
+                    logger.info(f"[Continuous] Config updated: PID={new_pid}, interval={new_interval}s, duration={new_duration}s")
+                    target_pid = new_pid
+                    interval = new_interval
+                    duration = new_duration
+        except Exception as e:
+            logger.warning(f"[Continuous] Failed to fetch config: {e}")
+
         try:
             ts = int(time.time())
             cid = f"continuous-{ts}"
             with tempfile.TemporaryDirectory() as tmp:
                 data = os.path.join(tmp, "perf.data")
                 subprocess.run([perf, "record", "-F", "49", "-g", "--call-graph", "dwarf",
-                                "-p", str(CONTINUOUS_PID), "-o", data, "--", "sleep", str(CONTINUOUS_DURATION)],
-                               check=True, timeout=CONTINUOUS_DURATION + 30)
+                                "-p", str(target_pid), "-o", data, "--", "sleep", str(duration)],
+                               check=True, timeout=duration + 30)
                 key = f"continuous/{cid}/perf.data"
                 store_file(key, data)
                 # 自动触发分析
@@ -262,11 +286,11 @@ def continuous_profiling_loop():
                     requests.post(f"{ANALYZER_URL}/analyze_continuous/{cid}", timeout=5)
                 except Exception:
                     pass
-                logger.info(f"[Continuous] Window {cid} collected")
+                logger.info(f"[Continuous] Window {cid} collected (PID={target_pid}, dur={duration}s)")
         except Exception as e:
             logger.error(f"[Continuous] Error: {e}")
 
-        time.sleep(CONTINUOUS_INTERVAL)
+        time.sleep(interval)
 
 
 # ========== 任务调度 ==========
@@ -300,9 +324,9 @@ def execute_task(task):
 def main():
     logger.info(f"Agent {AGENT_ID} starting on {platform.uname().node}")
 
-    if CONTINUOUS_PROFILING_ENABLED:
-        import threading
-        threading.Thread(target=continuous_profiling_loop, daemon=True).start()
+    # 持续分析线程：默认启动，由 Server 的 /api/continuous/state 控制启停
+    import threading
+    threading.Thread(target=continuous_profiling_loop, daemon=True).start()
 
     while True:
         heartbeat()
