@@ -3,6 +3,10 @@
 
 cd "$(dirname "$0")"
 
+# 0. 强制同步最新代码
+git checkout -- . 2>/dev/null
+git pull origin main 2>/dev/null
+
 echo "========================================="
 echo "  Drop 开发模式启动"
 echo "========================================="
