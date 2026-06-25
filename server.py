@@ -233,6 +233,12 @@ def index():
     with open(path, 'r', encoding='utf-8') as f:
         return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
 
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    import os as _os
+    static_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'static')
+    return send_file(_os.path.join(static_dir, filename))
+
 @app.route('/api/tasks', methods=['GET'])
 def list_tasks():
     conn = get_db()

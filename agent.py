@@ -105,11 +105,13 @@ def execute_ebpf_task(tid, pid, duration):
         raise RuntimeError("bpftrace not found, install bpftrace")
 
     # 构建 bpftrace 脚本: 同时监听 read 和 write 系统调用
-    pid_filter = f"/pid == {pid}/" if pid and pid > 0 else ""
+    pid_filter = f" /pid == {pid}/" if pid and pid > 0 else ""
     script_lines = [
-        f"tracepoint:syscalls:sys_enter_read",
-        f"tracepoint:syscalls:sys_enter_write",
-        pid_filter,
+        f"tracepoint:syscalls:sys_enter_read{pid_filter}",
+        "{",
+        "    @[kstack, ustack, probe] = count();",
+        "}",
+        f"tracepoint:syscalls:sys_enter_write{pid_filter}",
         "{",
         "    @[kstack, ustack, probe] = count();",
         "}",
@@ -187,7 +189,7 @@ def execute_pyspy_task(tid, pid, duration):
         # py-spy record 输出折叠栈格式
         result = subprocess.run(
             [pyspy, "record", "-p", str(pid), "-d", str(duration),
-             "-f", "folded", "-o", folded_path],
+             "-f", "flamegraph", "-o", folded_path],
             capture_output=True, text=True, timeout=duration + 30
         )
         if result.returncode != 0:
