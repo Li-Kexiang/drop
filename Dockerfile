@@ -1,10 +1,13 @@
 FROM python:3.10-slim
 
+# 安装 perf、bpftrace 及相关依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     linux-perf \
     bpftrace \
+    linux-headers-amd64 \
     curl \
     git \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # FlameGraph 工具
@@ -19,5 +22,4 @@ RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ -r req
 
 COPY . .
 
-# 默认不运行，由 docker-compose 指定 command
 CMD ["echo", "Drop container ready"]
