@@ -8,7 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    kmod \
+    && rm -rf /var/lib/apt/lists/* \
+    && if [ ! -f /usr/bin/perf ]; then \
+         PERF=$(ls /usr/bin/perf* 2>/dev/null | head -1); \
+         [ -n "$PERF" ] && ln -s "$PERF" /usr/bin/perf; \
+       fi \
+    && echo "perf: $(which perf 2>/dev/null || echo NOT FOUND)" \
+    && echo "bpftrace: $(which bpftrace 2>/dev/null || echo NOT FOUND)"
 
 # FlameGraph 工具
 RUN git clone --depth=1 https://github.com/brendangregg/FlameGraph.git /opt/FlameGraph \
