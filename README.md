@@ -133,20 +133,6 @@ drop/
 
 视频链接：https://share.weiyun.com/Z33242uo
 
-本系统已集成 eBPF 采集器，支持通过 `bpftrace` 采集 IO 事件并生成火焰图。
-
-> **为什么视频中没有演示？**  
-> 演示环境为 WSL2，eBPF 支持受限。eBPF 采集器已在代码中完整实现，可直接在原生 Linux（Ubuntu 22.04）上运行。
-
-### 在原生 Linux 上运行 eBPF
-
-1. 安装 `bpftrace`：
-   ```bash
-   sudo apt install bpftrace
-运行演示脚本：
-./scripts/ebpf_demo.sh
-在 Web 界面选择 eBPF (IO事件)，填入 dd 进程的 PID，点击采集，火焰图会显示 vfs_read、__do_sys_read 等内核函数。
-
 ## 设计文档
 
 详细架构、状态机迁移图、关键决策、性能自证等见 [docs/design.md](docs/design.md)。
