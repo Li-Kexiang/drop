@@ -32,10 +32,10 @@ LOCAL_STORAGE = os.getenv("LOCAL_STORAGE", os.path.join(os.path.dirname(os.path.
 def get_db():
     """获取数据库连接 (PostgreSQL 或 SQLite)"""
     if DEV_MODE:
-        conn = sqlite3.connect(SQLITE_PATH, timeout=10)
+        conn = sqlite3.connect(SQLITE_PATH, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA busy_timeout=10000")
         return conn
     else:
         return psycopg2.connect(DB_DSN)
@@ -220,7 +220,7 @@ init_db()
 def audit(aid, evt, det=None):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(_q("INSERT INTO audit_log (agent_id, event, details) VALUES (%s, %s, %s)"), (aid, evt, det))
+    cur.execute( _q("INSERT INTO audit_log (agent_id, event, details) VALUES (%s, %s, %s)"), (aid, evt, det))
     conn.commit()
     cur.close()
     conn.close()
@@ -261,7 +261,7 @@ def heartbeat():
     row = cur.fetchone()
     if row and (row[0] if not DEV_MODE else row['status']) == 'OFFLINE':
         audit(aid, "AGENT_RECOVERED", f"Agent {aid} recovered")
-    cur.execute(_q('''
+    cur.execute( _q('''
         INSERT INTO agents (agent_id, hostname, ip, last_heartbeat, status)
         VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 'ONLINE')
         ON CONFLICT (agent_id) DO UPDATE
@@ -293,13 +293,13 @@ def create_task():
         return jsonify({"error":"pid and agent_id required"}), 400
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(_q('''
+    cur.execute( _q('''
         INSERT INTO agents (agent_id, hostname, ip, last_heartbeat, status)
         VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 'ONLINE')
         ON CONFLICT DO NOTHING
     '''), (aid, 'unknown', 'unknown'))
     tid = "task-" + uuid.uuid4().hex[:8]
-    cur.execute(_q('''
+    cur.execute( _q('''
         INSERT INTO tasks (tid, pid, duration, hz, profiler, status, reason, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, 'PENDING', 'Task created', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     '''), (tid, pid, dur, hz, data.get('profiler', 'perf')))
@@ -316,7 +316,7 @@ def get_pending(aid):
     cur.execute("SELECT tid, pid, duration, hz, profiler FROM tasks WHERE status='PENDING' ORDER BY created_at LIMIT 1")
     task = _fetchone(cur)
     if task:
-        cur.execute(_q("UPDATE tasks SET status='RUNNING', reason='Agent picked up', updated_at=CURRENT_TIMESTAMP WHERE tid=%s"), (task['tid'],))
+        cur.execute( _q("UPDATE tasks SET status='RUNNING', reason='Agent picked up', updated_at=CURRENT_TIMESTAMP WHERE tid=%s"), (task['tid'],))
         conn.commit()
     cur.close()
     conn.close()
@@ -332,7 +332,7 @@ def task_result(tid):
     reason = data.get('reason', '')
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(_q("UPDATE tasks SET status=%s, reason=%s, updated_at=CURRENT_TIMESTAMP WHERE tid=%s"), (status, reason, tid))
+    cur.execute( _q("UPDATE tasks SET status=%s, reason=%s, updated_at=CURRENT_TIMESTAMP WHERE tid=%s"), (status, reason, tid))
     conn.commit()
     cur.close()
     conn.close()
@@ -409,7 +409,7 @@ def check_offline():
         conn = get_db()
         cur = conn.cursor()
         if DEV_MODE:
-            cur.execute("""
+            cur.execute( """
                 UPDATE agents SET status='OFFLINE'
                 WHERE last_heartbeat < datetime('now', '-30 seconds')
                 AND status='ONLINE'
@@ -433,8 +433,7 @@ def check_offline():
 
 if not DEV_MODE:
     threading.Thread(target=check_offline, daemon=True).start()
-else:
-    threading.Thread(target=check_offline, daemon=True).start()
+# DEV_MODE 下 check_offline 暂时禁用，避免 SQLite 并发写入冲突
 
 @app.route("/api/audit", methods=["GET"])
 def get_audit():
@@ -667,4 +666,4 @@ def _rule_based_attribution(heatmap_data):
 
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
