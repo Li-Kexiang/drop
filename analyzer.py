@@ -40,8 +40,11 @@ def stat_obj(key):
     if DEV_MODE:
         return os.path.exists(os.path.join(LOCAL_STORAGE, key))
     else:
-        mc.stat_object("drop", key)
-        return True
+        try:
+            mc.stat_object("drop", key)
+            return True
+        except Exception:
+            return False
 
 
 def heatmap_json(folded_path):
