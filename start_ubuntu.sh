@@ -1,8 +1,6 @@
 #!/bin/bash
 # Drop 开发模式一键启动 (Ubuntu)
-# 自带 venv 创建、依赖安装，自动选择正确的 Python
 
-set -e
 cd "$(dirname "$0")"
 
 echo "========================================="
@@ -23,14 +21,11 @@ export SQLITE_PATH="$(pwd)/drop_dev.db"
 export LOCAL_STORAGE="$(pwd)/data_storage"
 mkdir -p "$LOCAL_STORAGE/tasks" "$LOCAL_STORAGE/continuous"
 
-# 3. 停旧进程 (force kill all python)
-for pid in $(ps aux | grep '[p]ython.*drop' | awk '{print $2}'); do
+# 3. 停旧进程 (force kill all python drop processes)
+for pid in $(ps aux | grep '[p]ython.*\(server\|agent\|analyzer\)' | awk '{print $2}'); do
     kill -9 $pid 2>/dev/null
 done
-# 释放端口
-fuser -k 5000/tcp 2>/dev/null
-fuser -k 5003/tcp 2>/dev/null
-sleep 2
+sleep 1
 
 # 4. 用 venv 的 Python 启动所有服务
 echo ""
