@@ -120,25 +120,51 @@ Agent 内部通过 `profiler` 参数路由到不同采集器：
 - **LLM 模式**: 接入 OpenAI 兼容 API，提供高质量分析
 - **规则模式**: 基于函数名模式匹配的启发式分析，离线可用，确保 fallback
 
-### 3.6 Continuous Profiling
-- 环境变量控制开关（`CONTINUOUS_PROFILING=true`）
-- Agent 内部独立线程，定时低频采样（49Hz）
-- 按时间戳切割窗口，每个窗口独立分析
+### 3.6 Continuous Profiling（持续分析）
+- Agent 启动时自动开启持续分析线程（无需环境变量开关）
+- 每次循环从 Server `GET /api/continuous/state` 动态读取配置：
+  - `running` — 是否暂停（false 时等待）
+  - `pid` — 目标进程
+  - `interval` — 采集间隔（秒）
+  - `duration` — 每次采集时长（秒）
+- Web UI 的「📊 持续分析」面板提供 PID/间隔/时长 输入框
+- 支持运行时修改参数，无需重启 Agent
+- 每个时间窗口独立分析，生成火焰图 + 热力图
 
 ## 4. 取舍说明
 
 ### 已做取舍
 1. **eBPF 权限要求高**：需要 `sudo` 和特权容器，Docker Compose 中用 `privileged: true` 解决
 2. **py-spy 仅限 Python**：对其他语言应用需 fallback 到 perf
-3. **持续分析非实时**：窗口之间有间隔，不保证无死角覆盖
+3. **持续分析非实时**：窗口之间有间隔，不保证无死角覆盖；Agent 通过轮询 Server 获取配置，最多有一个间隔的延迟
 4. **归因的 LLM 依赖外部 API**：无网络时自动回退规则引擎
 
 ### 未做取舍（延后）
 1. Java async-profiler：可作为第四种采集器扩展
 2. 分布式 Agent 管理：当前仅支持单 Agent
 3. WebSocket 实时推送：当前使用轮询方式
+4. 持续分析窗口与任务列表统一：`continuous-*` 窗口不在 tasks 表中，通过 Server 定制端点处理
 
-## 5. AI 协作章节
+## 5. API 端点汇总
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/tasks` | 创建采集任务 |
+| GET | `/api/tasks` | 列出所有任务 |
+| GET | `/api/tasks/<tid>` | 任务详情（支持 `continuous-*`） |
+| POST | `/api/tasks/<tid>/result` | Agent 上报结果 |
+| GET | `/api/tasks/<tid>/heatmap` | 热力图数据 |
+| GET | `/api/agents` | Agent 列表 |
+| POST | `/api/agents/heartbeat` | Agent 心跳 |
+| GET | `/api/agents/<aid>/tasks/pending` | 拉取待处理任务 |
+| POST | `/api/continuous/start` | 启动持续分析 |
+| POST | `/api/continuous/stop` | 停止持续分析 |
+| GET | `/api/continuous/state` | Agent 读取配置 |
+| GET | `/api/continuous/windows` | 列出时间窗口 |
+| GET | `/api/storage/<path>` | 存储代理（DEV 模式） |
+| POST | `/api/attribution/<tid>` | 智能归因 |
+
+## 6. AI 协作章节
 
 开发过程中使用 GitHub Copilot (DeepSeek V4 Pro) 协助：
 - **代码生成**：多采集器路由逻辑、eBPF bpftrace 脚本生成、智能归因 prompt 构建
@@ -151,7 +177,7 @@ AI 协作的最佳实践：
 - AI 生成的 eBPF 脚本需要在真实 Linux 环境验证
 - 安全相关的配置（如 privileged 容器）需人工审核
 
-## 6. 性能自证
+## 7. 性能自证
 
 ### 采集性能
 - perf 5 秒采集（99Hz）：约 500 个样本，火焰图 >300 帧
@@ -171,7 +197,7 @@ AI 协作的最佳实践：
 - PostgreSQL: ~100MB 内存
 - MinIO: ~80MB 内存
 
-## 7. 如果再有 7 天我会做什么
+## 8. 如果再有 7 天我会做什么
 
 1. **Java async-profiler 集成**：支持 Java 应用的 CPU/Allocation/Lock 分析
 2. **WebSocket 实时推送**：替代前端轮询，任务状态变更实时通知

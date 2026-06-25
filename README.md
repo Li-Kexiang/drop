@@ -48,7 +48,7 @@ make demo-docker
 
 ## 使用说明
 
-### 快速开始
+### 快速开始（单次采集）
 
 1. 启动一个测试用的 Python 进程：
    ```bash
@@ -59,6 +59,19 @@ make demo-docker
 2. 在 Web UI (`http://localhost:5000`) 填入 PID，选采集器，点「开始采集」
 
 3. 等待状态变为 **DONE**，查看火焰图、热力图和 LLM 智能归因
+
+### 持续分析（定时自动采集）
+
+切换到 **📊 持续分析** 标签页，可配置：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| PID | 目标进程 | 1 |
+| 间隔(s) | 两次采集之间等待时长 | 30 |
+| 时长(s) | 每次采集持续时长 | 5 |
+
+点击「启动持续分析」，Agent 按设定节奏自动反复采集，每个时间窗口独立生成火焰图和热力图。
+Agent 每次循环从 Server 动态读取配置，支持运行时修改参数（无需重启）。
 
 ### perf 权限
 
@@ -102,18 +115,14 @@ drop/
 ├── start_all.sh           # 一键启动脚本（含公网隧道）
 ├── start_dev.sh           # 开发模式启动脚本
 ├── index2.html            # Web UI（单页应用）
-├── static/                # 本地 JS 库
+├── static/                # 本地 JS 库（axios, echarts）
+├── tests/                 # 单元测试 & 端到端测试
+├── docs/                  # 设计文档
 ├── Makefile               # Make 命令
 ├── docker-compose.yml     # Docker 编排
+├── Dockerfile             # Docker 镜像
 └── requirements.txt       # Python 依赖
 ```
-├── agent.py               # 采集 Agent（perf / eBPF / py-spy）
-├── analyzer.py            # 分析引擎（火焰图 + 热力图）
-├── index2.html            # Web UI（ECharts + SVG 火焰图）
-├── Dockerfile             # Docker 镜像
-├── docker-compose.yml     # Docker Compose 编排
-└── requirements.txt       # Python 依赖
-- 密码：drop1234
 
 ## 采集器对比
 
@@ -125,9 +134,11 @@ drop/
 
 ## 智能归因
 
-归因系统支持两种模式：
+任务完成后，点击「🤖 归因」按钮，系统支持两种模式：
 1. **LLM 模式**：设置环境变量 `LLM_ENDPOINT`、`LLM_API_KEY`、`LLM_MODEL`，调用 OpenAI 兼容 API
 2. **规则模式**（默认）：基于函数名模式匹配 + 采样数据统计，离线可用
+
+产出包含热点识别、根因分析、优化建议、置信度和验证方法。
 
 ## 演示视频
 
@@ -136,6 +147,3 @@ drop/
 ## 设计文档
 
 详细架构、状态机迁移图、关键决策、性能自证等见 [docs/design.md](docs/design.md)。
-
-
-详细说明见 scripts/ebpf_demo.sh。
